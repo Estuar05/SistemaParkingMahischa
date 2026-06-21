@@ -1,16 +1,25 @@
 ; Instalador de Parqueo Mahischa (Inno Setup 6).
-; Instala el programa (self-contained, no requiere .NET) y detecta SQL Server Express.
+; Instala el programa (self-contained, no requiere .NET) y, si se incluye el redistribuible,
+; instala SQL Server Express automáticamente (instancia SQLEXPRESS).
 ; La base de datos se crea automáticamente la primera vez que se ejecuta el programa.
 ;
-; Requisitos para compilar este instalador:
-;   1) Ejecutar primero  publish.ps1  (genera la carpeta ..\publish).
-;   2) Tener instalado Inno Setup 6 (https://jrsoftware.org/isdl.php).
-;   3) Abrir este archivo con Inno Setup y presionar "Compile" (o ISCC.exe ParqueoMahischa.iss).
+; Para INCLUIR la instalación automática de SQL Express:
+;   1) Descargar SQL Server Express ("Express Core") de Microsoft. Queda un .exe autoextraíble.
+;   2) Copiarlo como:  installer\redist\SQLEXPR_x64_ENU.exe
+;   3) Recompilar este script. (Si el archivo no está, el instalador se compila igual,
+;      solo que avisará al cliente que debe instalar SQL Express a mano.)
+;
+; Para compilar: publish.ps1 (genera ..\publish) y luego abrir este .iss en Inno Setup -> Compile.
 
 #define AppName "Parqueo Mahischa"
 #define AppVersion "1.0.0"
 #define AppExe "SistemaParkingMaisha.exe"
 #define Publisher "Parqueo Mahischa"
+#define SqlRedist "redist\SQLEXPR_x64_ENU.exe"
+
+#ifexist SqlRedist
+  #define IncludeSql
+#endif
 
 [Setup]
 AppId={{8F3A1C2E-9B4D-4E7A-AB12-7C5D9E0F1234}
@@ -43,10 +52,9 @@ Name: "{app}"; Permissions: users-modify
 
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
-; --- SQL Server Express opcional ---
-; Para instalar SQL Express automáticamente, descargue SQLEXPR_x64_ENU.exe, colóquelo en
-; installer\redist\ y descomente la siguiente línea y la correspondiente en [Run].
-; Source: "redist\SQLEXPR_x64_ENU.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: not SqlExpressInstalled
+#ifdef IncludeSql
+Source: "{#SqlRedist}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsSql
+#endif
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
@@ -54,11 +62,13 @@ Name: "{group}\Desinstalar {#AppName}"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
-; --- Instalación silenciosa de SQL Server Express (opcional, ver [Files]) ---
-; Filename: "{tmp}\SQLEXPR_x64_ENU.exe"; \
-;   Parameters: "/QS /IACCEPTSQLSERVERLICENSETERMS /ACTION=Install /FEATURES=SQLENGINE /INSTANCENAME=SQLEXPRESS /TCPENABLED=1 /SQLSYSADMINACCOUNTS=BUILTIN\Administrators"; \
-;   StatusMsg: "Instalando SQL Server Express (puede tardar varios minutos)..."; \
-;   Check: not SqlExpressInstalled
+#ifdef IncludeSql
+; Instalación silenciosa de SQL Server Express (solo si no existe la instancia SQLEXPRESS).
+Filename: "{tmp}\SQLEXPR_x64_ENU.exe"; \
+  Parameters: "/QS /IACCEPTSQLSERVERLICENSETERMS /ACTION=Install /FEATURES=SQLENGINE /INSTANCENAME=SQLEXPRESS /TCPENABLED=1 /SQLSVCSTARTUPTYPE=Automatic /SQLSYSADMINACCOUNTS=""BUILTIN\Administrators"""; \
+  StatusMsg: "Instalando SQL Server Express (puede tardar varios minutos)..."; \
+  Check: NeedsSql
+#endif
 Filename: "{app}\{#AppExe}"; Description: "Iniciar {#AppName} ahora"; Flags: nowait postinstall skipifsilent
 
 [Code]
@@ -76,6 +86,12 @@ begin
   end;
 end;
 
+function NeedsSql(): Boolean;
+begin
+  Result := not SqlExpressInstalled();
+end;
+
+#ifndef IncludeSql
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if (CurStep = ssPostInstall) and (not SqlExpressInstalled()) then
@@ -87,3 +103,4 @@ begin
            mbInformation, MB_OK);
   end;
 end;
+#endif

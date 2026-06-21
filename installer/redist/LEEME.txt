@@ -1,0 +1,17 @@
+Coloque aquí el instalador autoextraíble de SQL Server Express con el nombre EXACTO:
+
+    SQLEXPR_x64_ENU.exe
+
+Cómo obtenerlo:
+ 1. En la pantalla de descarga de SQL Server Express, elija el paquete "Express Core".
+ 2. Se descarga un único archivo .exe (autoextraíble). Si su nombre es distinto,
+    renómbrelo a  SQLEXPR_x64_ENU.exe.
+ 3. Cópielo a esta carpeta (installer\redist\).
+
+Con ese archivo presente, al recompilar el instalador (ISCC) éste instalará SQL Server
+Express automáticamente (instancia SQLEXPRESS) en las PCs que no lo tengan.
+
+Si NO coloca este archivo, el instalador se compila igual, pero le pedirá al cliente que
+instale SQL Server Express por su cuenta.
+
+Nota: este archivo (~300 MB) NO se sube a GitHub (está en .gitignore).
