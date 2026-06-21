@@ -155,7 +155,7 @@ public static class UpdateService
                 timeout /t 1 /nobreak >nul
                 goto wait
             )
-            robocopy "{sourceDir}" "{appDir}" /E /R:3 /W:2 /NFL /NDL /NJH /NJS /NC /NS /NP >nul
+            robocopy "{sourceDir}" "{appDir}" /E /R:3 /W:2 /XF "SistemaParkingMaisha.dll.config" "ultimo_respaldo.txt" /NFL /NDL /NJH /NJS /NC /NS /NP >nul
             start "" "{exePath}"
             rmdir /s /q "{tempRoot}" >nul 2>&1
             (goto) 2>nul & del "%~f0"
