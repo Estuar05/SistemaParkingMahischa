@@ -12,7 +12,9 @@
 ; Para compilar: publish.ps1 (genera ..\publish) y luego abrir este .iss en Inno Setup -> Compile.
 
 #define AppName "Parqueo Mahischa"
-#define AppVersion "1.0.0"
+#ifndef AppVersion
+  #define AppVersion "1.0.0"
+#endif
 #define AppExe "SistemaParkingMaisha.exe"
 #define Publisher "Parqueo Mahischa"
 #define SqlRedist "redist\SQLEXPR_x64_ENU.exe"
