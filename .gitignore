@@ -12,6 +12,7 @@ installer/redist/
 # Artefactos locales
 ultimo_respaldo.txt
 *.bak
+*.zip
 
 # SO
 Thumbs.db
