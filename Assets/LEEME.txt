@@ -1,0 +1,12 @@
+Coloque aquí el logo del parqueo con el nombre exacto:
+
+    logo.png
+
+Recomendado: imagen cuadrada PNG (por ejemplo 512x512) con fondo transparente o claro.
+
+El programa lo carga automáticamente al iniciar:
+ - Aparece de forma sutil en el login y en la barra lateral.
+ - Se usa como icono de la ventana.
+ - Se imprime como marca de agua tenue en el tiquete.
+
+Si el archivo no existe, el sistema funciona igual, sin logo.

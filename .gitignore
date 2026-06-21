@@ -1,0 +1,18 @@
+# Build
+bin/
+obj/
+publish/
+installer/Output/
+installer/redist/
+
+# Visual Studio
+.vs/
+*.user
+
+# Artefactos locales
+ultimo_respaldo.txt
+*.bak
+
+# SO
+Thumbs.db
+desktop.ini
