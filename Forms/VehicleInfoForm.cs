@@ -29,7 +29,7 @@ public sealed class VehicleInfoForm : Form
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(440, 430);
+        ClientSize = new Size(440, 482);
         BackColor = Color.White;
         Icon = BrandAssets.Icon;
 
@@ -87,13 +87,15 @@ public sealed class VehicleInfoForm : Form
             AutoSize = true
         };
 
-        var btnExit = MakeButton(active ? "Registrar salida" : "Salida ya registrada", new Point(28, 360), primary: true);
+        var btnExit = MakeButton(active ? "Registrar salida" : "Salida ya registrada", new Point(28, 356), primary: true);
+        btnExit.Size = new Size(384, 48);
         btnExit.BackColor = Color.FromArgb(22, 163, 74);
         btnExit.FlatAppearance.MouseOverBackColor = Color.FromArgb(18, 135, 62);
         btnExit.Enabled = active;
         btnExit.Click += RegisterExit;
 
-        var btnReprint = MakeButton("Reimprimir tiquete", new Point(212, 360), primary: false);
+        var btnReprint = MakeButton("Reimprimir tiquete", new Point(28, 416), primary: false);
+        btnReprint.Size = new Size(236, 44);
         btnReprint.Click += (_, _) =>
         {
             AuditService.Log(_currentUser.UserId, "ReimprimirTiquete", "ParkingSessions", _session.SessionId.ToString(), $"Placa {_session.Plate}");
@@ -101,8 +103,8 @@ public sealed class VehicleInfoForm : Form
             preview.ShowDialog(this);
         };
 
-        var btnClose = MakeButton("Cerrar", new Point(346, 360), primary: false);
-        btnClose.Width = 66;
+        var btnClose = MakeButton("Cerrar", new Point(276, 416), primary: false);
+        btnClose.Size = new Size(136, 44);
         btnClose.Click += (_, _) => Close();
 
         Controls.AddRange([info, lblAmount, lblAmountCaption, lblPlate, lblTitle, btnExit, btnReprint, btnClose, accent]);

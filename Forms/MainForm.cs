@@ -988,22 +988,23 @@ public partial class MainForm : Form
         employeePanel.Controls.Add(btnEmployeeClose);
 
         cashPanel.Controls.Add(CreateSectionTitle("Cierre de caja", 24, 20));
-        AddLabeledControl(cashPanel, "Fecha automatica", lblCashDate, 76);
-        lblBase.Location = new Point(24, 116);
-        lblSysAmt.Location = new Point(24, 140);
-        lblExpectedCash.Location = new Point(24, 164);
+        AddLabeledControl(cashPanel, "Fecha automatica", lblCashDate, 64);
+        lblBase.Location = new Point(24, 128);
+        lblSysAmt.Location = new Point(24, 150);
+        lblExpectedCash.Location = new Point(24, 172);
         cashPanel.Controls.Add(lblBase);
         cashPanel.Controls.Add(lblSysAmt);
         cashPanel.Controls.Add(lblExpectedCash);
-        cashPanel.Controls.Add(CreateSectionTitle("Billetes y monedas", 24, 196));
-        denominationPanel.Location = new Point(24, 228);
+        cashPanel.Controls.Add(CreateSectionTitle("Billetes y monedas", 24, 202));
+        denominationPanel.Location = new Point(24, 234);
+        denominationPanel.Size = new Size(460, 256);
         cashPanel.Controls.Add(denominationPanel);
-        lblCounted.Location = new Point(24, 508);
-        lblDiff.Location = new Point(24, 534);
+        lblCounted.Location = new Point(24, 498);
+        lblDiff.Location = new Point(24, 522);
         cashPanel.Controls.Add(lblCounted);
         cashPanel.Controls.Add(lblDiff);
-        btnSystem.Location = new Point(24, 572);
-        btnCashClose.Location = new Point(220, 572);
+        btnSystem.Location = new Point(24, 556);
+        btnCashClose.Location = new Point(220, 556);
         cashPanel.Controls.Add(btnSystem);
         cashPanel.Controls.Add(btnCashClose);
         UpdateSummary();
@@ -1121,6 +1122,7 @@ public partial class MainForm : Form
                 Total = r.ClosureType == "Caja" ? r.CountedAmount : r.DeliveredAmount,
                 Diferencia = r.DifferenceAmount
             }).ToList();
+            HideGridColumn(grid, "Id");
             selectedRecord = currentRecords.FirstOrDefault();
             preview.Text = selectedRecord is null ? "No hay cierres para mostrar." : BuildClosurePreview(selectedRecord);
         }
