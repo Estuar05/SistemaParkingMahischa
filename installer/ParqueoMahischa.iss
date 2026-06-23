@@ -38,6 +38,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 WizardStyle=modern
+SetupIconFile=..\app.ico
 UninstallDisplayIcon={app}\{#AppExe}
 
 [Languages]
