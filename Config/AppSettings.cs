@@ -62,5 +62,5 @@ public static class AppSettings
     public static string DefaultAdminPassword => ConfigurationManager.AppSettings["DefaultAdminPassword"] ?? "admin123";
 
     public static decimal MinimumCashAmount =>
-        decimal.TryParse(ConfigurationManager.AppSettings["MinimumCashAmount"], out var value) ? value : 50000m;
+        decimal.TryParse(ConfigurationManager.AppSettings["MinimumCashAmount"], out var value) ? value : 20000m;
 }

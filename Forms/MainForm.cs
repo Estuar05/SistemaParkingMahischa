@@ -21,6 +21,7 @@ public partial class MainForm : Form
     private int _indicatorTarget;
     private Button? _activeMenuButton;
     private Button? _btnUpdate;
+    private string _currentHelpKey = "Panel";
 
     public MainForm(User currentUser)
     {
@@ -41,7 +42,34 @@ public partial class MainForm : Form
         SetupNavigation();
         SetupBackupButton();
         SetupUpdateButton();
+        SetupHelpButton();
         ShowDashboard();
+    }
+
+    private void SetupHelpButton()
+    {
+        var btnHelp = new Button
+        {
+            Text = "?  Ayuda",
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+            ForeColor = Color.White,
+            BackColor = Color.FromArgb(36, 99, 235),
+            Size = new Size(120, 38),
+            Location = new Point(300, 21),
+            Cursor = Cursors.Hand,
+            UseVisualStyleBackColor = false
+        };
+        btnHelp.FlatAppearance.BorderSize = 0;
+        btnHelp.FlatAppearance.MouseOverBackColor = Color.FromArgb(29, 78, 192);
+        UiKit.RoundCorners(btnHelp, 8);
+        btnHelp.Click += (_, _) =>
+        {
+            using var help = new HelpForm(_currentHelpKey, HelpContent.For(_currentHelpKey));
+            help.ShowDialog(this);
+        };
+        pnlTop.Controls.Add(btnHelp);
+        btnHelp.BringToFront();
     }
 
     private void SetupUpdateButton()
@@ -402,16 +430,29 @@ public partial class MainForm : Form
             preview.ShowDialog(this);
         });
 
-        btnFindQr.Click += (_, _) => ExecuteThrottled(btnFindQr, () =>
+        btnFindQr.Click += (_, _) => ExecuteWithMessage(() =>
         {
-            var session = _controller.FindByTicket(txtQr.Text);
-            if (session is null)
+            if (string.IsNullOrWhiteSpace(txtQr.Text))
             {
-                MessageBox.Show("No se encontró un registro con ese QR.", "Búsqueda", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            RenderSelected(session);
+            var session = _controller.FindByTicket(txtQr.Text);
+            txtQr.Clear();
+            txtQr.Focus();
+            if (session is null)
+            {
+                MessageBox.Show("No se encontró un vehículo con ese código QR.", "Búsqueda", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using var info = new VehicleInfoForm(session, _controller, _currentUser);
+            info.ShowDialog(this);
+            if (info.ChangesMade)
+            {
+                LoadGrid();
+                RenderSelected(null);
+            }
         });
         txtQr.KeyDown += (_, e) =>
         {
@@ -825,9 +866,21 @@ public partial class MainForm : Form
             AutoScroll = false,
             WrapContents = true
         };
-        var lblCounted = CreateInfoLabel("Contado: ₡0");
-        var lblSystem = CreateInfoLabel($"Sistema: ₡0\nMínimo de caja: {MoneyHelper.Format(AppSettings.MinimumCashAmount)}");
-        var btnSystem = CreateSecondaryButton("Calcular sistema");
+        var baseAmount = AppSettings.MinimumCashAmount;
+        decimal systemAmount = 0m;
+        try { systemAmount = _controller.GetSystemCashForDate(DateTime.Today); } catch { /* se recalcula con el botón */ }
+
+        var lblBase = CreateInfoLabel($"Fondo de caja (base): {MoneyHelper.Format(baseAmount)}");
+        lblBase.ForeColor = Color.FromArgb(100, 116, 139);
+        var lblSysAmt = CreateInfoLabel("Cobrado hoy (sistema): ₡0");
+        var lblExpectedCash = CreateInfoLabel("Esperado en caja: ₡0");
+        var lblCounted = CreateInfoLabel("Contado (físico): ₡0");
+        var lblDiff = CreateInfoLabel("Diferencia: ₡0");
+        foreach (var lbl in new[] { lblBase, lblSysAmt, lblExpectedCash, lblCounted, lblDiff })
+        {
+            lbl.Size = new Size(450, 24);
+        }
+        var btnSystem = CreateSecondaryButton("Recalcular");
         var btnCashClose = CreatePrimaryButton("Cerrar caja");
 
         foreach (var denomination in denominationValues)
@@ -848,17 +901,26 @@ public partial class MainForm : Form
                 Maximum = 10000,
                 Location = new Point(84, 3)
             };
-            input.ValueChanged += (_, _) => UpdateCountedLabel();
+            input.ValueChanged += (_, _) => UpdateSummary();
             denominationInputs.Add(denomination, input);
             row.Controls.Add(label);
             row.Controls.Add(input);
             denominationPanel.Controls.Add(row);
         }
 
-        void UpdateCountedLabel()
+        void UpdateSummary()
         {
             var counted = denominationInputs.Sum(item => item.Key * item.Value.Value);
-            lblCounted.Text = $"Contado: {MoneyHelper.Format(counted)}";
+            var expected = systemAmount + baseAmount;
+            var difference = counted - expected;
+            lblSysAmt.Text = $"Cobrado hoy (sistema): {MoneyHelper.Format(systemAmount)}";
+            lblExpectedCash.Text = $"Esperado en caja: {MoneyHelper.Format(expected)}";
+            lblCounted.Text = $"Contado (físico): {MoneyHelper.Format(counted)}";
+            var estado = difference == 0 ? "✔ Cuadra" : difference > 0 ? "▲ Sobra" : "▼ Falta";
+            lblDiff.Text = $"Diferencia: {MoneyHelper.Format(difference)}    {estado}";
+            lblDiff.ForeColor = difference == 0
+                ? Color.FromArgb(22, 163, 74)
+                : difference > 0 ? Color.FromArgb(202, 138, 4) : Color.FromArgb(220, 38, 38);
         }
 
         btnExpected.Click += (_, _) => ExecuteThrottled(btnExpected, () =>
@@ -888,17 +950,29 @@ public partial class MainForm : Form
 
         btnSystem.Click += (_, _) => ExecuteThrottled(btnSystem, () =>
         {
-            var systemAmount = _controller.GetSystemCashForDate(DateTime.Today);
-            lblSystem.Text = $"Sistema: {MoneyHelper.Format(systemAmount)}\nMínimo de caja: {MoneyHelper.Format(AppSettings.MinimumCashAmount)}";
+            systemAmount = _controller.GetSystemCashForDate(DateTime.Today);
+            UpdateSummary();
         });
 
         btnCashClose.Click += (_, _) => ExecuteThrottled(btnCashClose, () =>
         {
             var denominations = denominationInputs.ToDictionary(item => item.Key, item => Convert.ToInt32(item.Value.Value));
+            var counted = denominations.Sum(item => item.Key * item.Value);
+            var expected = systemAmount + baseAmount;
+            var difference = counted - expected;
             var closureDate = DateTime.Now;
             lblCashDate.Text = closureDate.ToString("dd/MM/yyyy HH:mm");
             var closureId = _controller.CreateCashClosure(closureDate, denominations, _currentUser.UserId);
-            MessageBox.Show($"Cierre de caja creado: #{closureId}", "Cierre de caja", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(
+                $"Cierre de caja #{closureId} creado.\n\n"
+                + $"Fondo base:  {MoneyHelper.Format(baseAmount)}\n"
+                + $"Sistema:     {MoneyHelper.Format(systemAmount)}\n"
+                + $"Esperado:    {MoneyHelper.Format(expected)}\n"
+                + $"Contado:     {MoneyHelper.Format(counted)}\n"
+                + $"Diferencia:  {MoneyHelper.Format(difference)}",
+                "Cierre de caja",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         });
 
         employeePanel.Controls.Add(CreateSectionTitle("Cierre de empleado", 24, 20));
@@ -915,24 +989,35 @@ public partial class MainForm : Form
 
         cashPanel.Controls.Add(CreateSectionTitle("Cierre de caja", 24, 20));
         AddLabeledControl(cashPanel, "Fecha automatica", lblCashDate, 76);
-        lblSystem.Location = new Point(24, 152);
-        cashPanel.Controls.Add(lblSystem);
-        cashPanel.Controls.Add(CreateSectionTitle("Billetes y monedas", 24, 214));
+        lblBase.Location = new Point(24, 116);
+        lblSysAmt.Location = new Point(24, 140);
+        lblExpectedCash.Location = new Point(24, 164);
+        cashPanel.Controls.Add(lblBase);
+        cashPanel.Controls.Add(lblSysAmt);
+        cashPanel.Controls.Add(lblExpectedCash);
+        cashPanel.Controls.Add(CreateSectionTitle("Billetes y monedas", 24, 196));
+        denominationPanel.Location = new Point(24, 228);
         cashPanel.Controls.Add(denominationPanel);
-        lblCounted.Location = new Point(24, 534);
-        lblCounted.Size = new Size(320, 24);
+        lblCounted.Location = new Point(24, 508);
+        lblDiff.Location = new Point(24, 534);
         cashPanel.Controls.Add(lblCounted);
-        btnSystem.Location = new Point(24, 568);
-        btnCashClose.Location = new Point(220, 568);
+        cashPanel.Controls.Add(lblDiff);
+        btnSystem.Location = new Point(24, 572);
+        btnCashClose.Location = new Point(220, 572);
         cashPanel.Controls.Add(btnSystem);
         cashPanel.Controls.Add(btnCashClose);
+        UpdateSummary();
 
         if (!_currentUser.HasPermission(PermissionKeys.CashClosure))
         {
             btnCashClose.Enabled = false;
             denominationPanel.Enabled = false;
             btnSystem.Enabled = false;
-            lblSystem.Text = "El cierre de caja requiere permiso asignado.";
+            lblSysAmt.Visible = false;
+            lblExpectedCash.Visible = false;
+            lblCounted.Visible = false;
+            lblDiff.Visible = false;
+            lblBase.Text = "El cierre de caja requiere permiso asignado.";
         }
 
         if (!_currentUser.HasPermission(PermissionKeys.EmployeeClosure))
@@ -1227,6 +1312,7 @@ public partial class MainForm : Form
     private void SetActive(Button button, string title)
     {
         lblTitle.Text = title;
+        _currentHelpKey = title;
         if (_activeMenuButton is not null)
         {
             _activeMenuButton.BackColor = _sidebar;
