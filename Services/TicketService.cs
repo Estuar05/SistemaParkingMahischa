@@ -10,7 +10,9 @@ public sealed class TicketService
     public Image GenerateQr(Guid ticketCode, int pixelsPerModule = 8)
     {
         using var generator = new QRCodeGenerator();
-        using var data = generator.CreateQrCode(ticketCode.ToString(), QRCodeGenerator.ECCLevel.Q);
+        // Formato "N" (32 hexadecimales sin guiones): se escanea de forma confiable en
+        // cualquier distribución de teclado, evitando que el lector altere el separador "-".
+        using var data = generator.CreateQrCode(ticketCode.ToString("N"), QRCodeGenerator.ECCLevel.Q);
         var qr = new PngByteQRCode(data);
         var bytes = qr.GetGraphic(pixelsPerModule);
         using var stream = new MemoryStream(bytes);

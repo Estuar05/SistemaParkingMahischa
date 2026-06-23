@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.Data.SqlClient;
 using SistemaParkingMahischa.Data;
 using SistemaParkingMahischa.Helpers;
@@ -65,7 +66,7 @@ public sealed class ParkingService
 
     public ParkingSession? GetSessionByTicketCode(string ticketCode)
     {
-        if (!Guid.TryParse(ticketCode.Trim(), out var code))
+        if (ExtractTicketGuid(ticketCode) is not { } code)
         {
             return null;
         }
@@ -79,6 +80,42 @@ public sealed class ParkingService
 
         using var reader = command.ExecuteReader();
         return reader.Read() ? MapSession(reader) : null;
+    }
+
+    /// <summary>
+    /// Obtiene el GUID del ticket a partir del texto escaneado, tolerando variaciones del lector:
+    /// con o sin guiones, con espacios, o con prefijos/sufijos agregados por el escáner.
+    /// </summary>
+    private static Guid? ExtractTicketGuid(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return null;
+        }
+
+        var trimmed = input.Trim();
+
+        // Caso normal: GUID con o sin guiones (formatos "D" o "N").
+        if (Guid.TryParse(trimmed, out var direct))
+        {
+            return direct;
+        }
+
+        // El lector pudo agregar prefijo/sufijo: buscar un GUID con guiones dentro del texto.
+        var match = Regex.Match(trimmed, "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+        if (match.Success && Guid.TryParse(match.Value, out var matched))
+        {
+            return matched;
+        }
+
+        // El lector pudo alterar los separadores: reconstruir desde 32 dígitos hexadecimales.
+        var hex = new string(trimmed.Where(Uri.IsHexDigit).ToArray());
+        if (hex.Length == 32 && Guid.TryParseExact(hex, "N", out var fromHex))
+        {
+            return fromHex;
+        }
+
+        return null;
     }
 
     public ParkingSession? GetSessionById(long sessionId)
