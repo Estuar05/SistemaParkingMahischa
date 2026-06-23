@@ -39,8 +39,9 @@ echo.
 echo === 3/5  Comprimiendo paquete ===
 set "ZIP=%ROOT%SistemaParkingMahischa-%VERSION%.zip"
 if exist "%ZIP%" del /q "%ZIP%"
-powershell -NoProfile -Command "Compress-Archive -Path 'publish\*' -DestinationPath '%ZIP%' -CompressionLevel Optimal"
+powershell -NoProfile -Command "Compress-Archive -Path '%ROOT%publish\*' -DestinationPath '%ZIP%' -CompressionLevel Optimal -Force"
 if errorlevel 1 goto :error
+if not exist "%ZIP%" ( echo No se genero el archivo ZIP. & goto :error )
 
 echo.
 echo === 4/5  Guardando cambio de version en git ===
