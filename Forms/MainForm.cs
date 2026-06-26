@@ -645,14 +645,9 @@ public partial class MainForm : Form
                 dialog.Reference,
                 dialog.TenderedAmount);
 
-            var changeText = dialog.PaymentMethod == PaymentMethods.Cash && dialog.TenderedAmount is { } tendered
-                ? $"\nPaga con: {MoneyHelper.Format(tendered)}\nVuelto: {MoneyHelper.Format(tendered - (closed.ChargedAmount ?? 0))}"
-                : string.Empty;
-            MessageBox.Show(
-                $"Salida registrada.\n\nPlaca: {closed.Plate}\nForma de pago: {dialog.PaymentMethod}\nTotal cobrado: {MoneyHelper.Format(closed.ChargedAmount ?? 0)}{changeText}",
-                "Cobro",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
+            var receipt = ExitReceipt.FromClosedSession(closed, dialog.PaymentMethod, dialog.TenderedAmount, dialog.Reference, _currentUser.FullName);
+            using var receiptForm = new ReceiptPreviewForm(receipt);
+            receiptForm.ShowDialog(this);
             LoadGrid();
             RenderSelected(null);
         });
