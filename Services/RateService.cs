@@ -14,7 +14,7 @@ public sealed class RateService
 
         using var command = connection.CreateCommand();
         command.CommandText = $"""
-            SELECT RateId, RateName, RateType, Amount, GraceMinutes, IsActive, SortOrder
+            SELECT RateId, RateName, RateType, Amount, GraceMinutes, IsActive, SortOrder, BlockMinutes, BlockAmount
             FROM dbo.ParkingRates
             {(activeOnly ? "WHERE IsActive = 1" : string.Empty)}
             ORDER BY IsActive DESC, SortOrder, RateName;
@@ -36,7 +36,7 @@ public sealed class RateService
 
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT RateId, RateName, RateType, Amount, GraceMinutes, IsActive, SortOrder
+            SELECT RateId, RateName, RateType, Amount, GraceMinutes, IsActive, SortOrder, BlockMinutes, BlockAmount
             FROM dbo.ParkingRates
             WHERE RateId = @RateId;
             """;
@@ -61,8 +61,8 @@ public sealed class RateService
         if (rate.RateId == 0)
         {
             command.CommandText = """
-                INSERT INTO dbo.ParkingRates(RateName, RateType, Amount, GraceMinutes, IsActive, SortOrder)
-                VALUES (@RateName, @RateType, @Amount, @GraceMinutes, @IsActive, @SortOrder);
+                INSERT INTO dbo.ParkingRates(RateName, RateType, Amount, GraceMinutes, IsActive, SortOrder, BlockMinutes, BlockAmount)
+                VALUES (@RateName, @RateType, @Amount, @GraceMinutes, @IsActive, @SortOrder, @BlockMinutes, @BlockAmount);
                 """;
         }
         else
@@ -75,6 +75,8 @@ public sealed class RateService
                     GraceMinutes = @GraceMinutes,
                     IsActive = @IsActive,
                     SortOrder = @SortOrder,
+                    BlockMinutes = @BlockMinutes,
+                    BlockAmount = @BlockAmount,
                     UpdatedAt = SYSDATETIME()
                 WHERE RateId = @RateId;
                 """;
@@ -87,6 +89,8 @@ public sealed class RateService
         command.Parameters.AddWithValue("@GraceMinutes", rate.GraceMinutes);
         command.Parameters.AddWithValue("@IsActive", rate.IsActive);
         command.Parameters.AddWithValue("@SortOrder", rate.SortOrder);
+        command.Parameters.AddWithValue("@BlockMinutes", (object?)rate.BlockMinutes ?? DBNull.Value);
+        command.Parameters.AddWithValue("@BlockAmount", (object?)rate.BlockAmount ?? DBNull.Value);
         command.ExecuteNonQuery();
         AuditService.Log(actingUserId, isNew ? "CrearTarifa" : "EditarTarifa", "ParkingRates",
             rate.RateId == 0 ? null : rate.RateId.ToString(), $"{rate.Name} ({rate.RateType}) {rate.Amount:0.00}");
@@ -100,7 +104,9 @@ public sealed class RateService
         Amount = reader.GetDecimal(reader.GetOrdinal("Amount")),
         GraceMinutes = reader.GetInt32(reader.GetOrdinal("GraceMinutes")),
         IsActive = reader.GetBoolean(reader.GetOrdinal("IsActive")),
-        SortOrder = reader.GetInt32(reader.GetOrdinal("SortOrder"))
+        SortOrder = reader.GetInt32(reader.GetOrdinal("SortOrder")),
+        BlockMinutes = reader.IsDBNull(reader.GetOrdinal("BlockMinutes")) ? null : reader.GetInt32(reader.GetOrdinal("BlockMinutes")),
+        BlockAmount = reader.IsDBNull(reader.GetOrdinal("BlockAmount")) ? null : reader.GetDecimal(reader.GetOrdinal("BlockAmount"))
     };
 }
 

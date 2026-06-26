@@ -179,8 +179,24 @@ public sealed class ParkingService
         return sessions;
     }
 
-    public ParkingSession RegisterExit(long sessionId, int userId)
+    public ParkingSession RegisterExit(
+        long sessionId,
+        int userId,
+        decimal extraAmount = 0m,
+        string paymentMethod = PaymentMethods.Cash,
+        string? reference = null,
+        decimal? tenderedAmount = null)
     {
+        if (extraAmount < 0)
+        {
+            throw new InvalidOperationException("El monto extra no puede ser negativo.");
+        }
+
+        if (paymentMethod != PaymentMethods.Cash && paymentMethod != PaymentMethods.Sinpe)
+        {
+            paymentMethod = PaymentMethods.Cash;
+        }
+
         using var connection = SqlDatabase.CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction();
@@ -210,7 +226,19 @@ public sealed class ParkingService
             }
 
             var exitAt = DateTime.Now;
-            var amount = CalculateAmount(session.EntryAt, exitAt, session.RateType, session.RateAmount, session.GraceMinutes);
+            var baseAmount = CalculateAmount(session, exitAt);
+            var amount = baseAmount + extraAmount;
+
+            decimal? changeAmount = null;
+            if (paymentMethod == PaymentMethods.Cash && tenderedAmount is { } tendered)
+            {
+                if (tendered < amount)
+                {
+                    throw new InvalidOperationException("El efectivo recibido es menor al monto a cobrar.");
+                }
+
+                changeAmount = tendered - amount;
+            }
 
             using (var update = connection.CreateCommand())
             {
@@ -220,12 +248,14 @@ public sealed class ParkingService
                     SET ExitAt = @ExitAt,
                         ExitedByUserId = @UserId,
                         ChargedAmount = @Amount,
+                        ExtraAmount = @ExtraAmount,
                         Status = 'C'
                     WHERE SessionId = @SessionId AND Status = 'A';
                     """;
                 update.Parameters.AddWithValue("@ExitAt", exitAt);
                 update.Parameters.AddWithValue("@UserId", userId);
                 update.Parameters.AddWithValue("@Amount", amount);
+                update.Parameters.AddWithValue("@ExtraAmount", extraAmount);
                 update.Parameters.AddWithValue("@SessionId", sessionId);
                 if (update.ExecuteNonQuery() != 1)
                 {
@@ -237,18 +267,23 @@ public sealed class ParkingService
             {
                 payment.Transaction = transaction;
                 payment.CommandText = """
-                    INSERT INTO dbo.Payments(SessionId, Amount, PaidAt, UserId, PaymentMethod)
-                    VALUES (@SessionId, @Amount, @PaidAt, @UserId, N'Efectivo');
+                    INSERT INTO dbo.Payments(SessionId, Amount, PaidAt, UserId, PaymentMethod, Reference, TenderedAmount, ChangeAmount)
+                    VALUES (@SessionId, @Amount, @PaidAt, @UserId, @PaymentMethod, @Reference, @Tendered, @Change);
                     """;
                 payment.Parameters.AddWithValue("@SessionId", sessionId);
                 payment.Parameters.AddWithValue("@Amount", amount);
                 payment.Parameters.AddWithValue("@PaidAt", exitAt);
                 payment.Parameters.AddWithValue("@UserId", userId);
+                payment.Parameters.AddWithValue("@PaymentMethod", paymentMethod);
+                payment.Parameters.AddWithValue("@Reference", (object?)reference ?? DBNull.Value);
+                payment.Parameters.AddWithValue("@Tendered", (object?)tenderedAmount ?? DBNull.Value);
+                payment.Parameters.AddWithValue("@Change", (object?)changeAmount ?? DBNull.Value);
                 payment.ExecuteNonQuery();
             }
 
             transaction.Commit();
-            AuditService.Log(userId, "RegistrarSalida", "ParkingSessions", sessionId.ToString(), $"Placa {session.Plate}, cobro {amount:0.00}");
+            AuditService.Log(userId, "RegistrarSalida", "ParkingSessions", sessionId.ToString(),
+                $"Placa {session.Plate}, cobro {amount:0.00} ({paymentMethod}), extra {extraAmount:0.00}");
             return GetSessionById(sessionId) ?? throw new InvalidOperationException("No se pudo leer la salida registrada.");
         }
         catch
@@ -256,6 +291,44 @@ public sealed class ParkingService
             transaction.Rollback();
             throw;
         }
+    }
+
+    /// <summary>Aplica una tarifa personalizada (solo para esta estadía) a una sesión activa.</summary>
+    public void SetCustomRate(long sessionId, string rateType, decimal amount, int graceMinutes, int? blockMinutes, decimal? blockAmount, string? note, int userId)
+    {
+        if (amount < 0)
+        {
+            throw new InvalidOperationException("El monto de la tarifa personalizada no puede ser negativo.");
+        }
+
+        using var connection = SqlDatabase.CreateConnection();
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE dbo.ParkingSessions
+            SET CustomRateType = @RateType,
+                CustomRateAmount = @Amount,
+                CustomGraceMinutes = @Grace,
+                CustomBlockMinutes = @BlockMinutes,
+                CustomBlockAmount = @BlockAmount,
+                CustomNote = @Note
+            WHERE SessionId = @SessionId AND Status = 'A';
+            """;
+        command.Parameters.AddWithValue("@RateType", rateType);
+        command.Parameters.AddWithValue("@Amount", amount);
+        command.Parameters.AddWithValue("@Grace", graceMinutes);
+        command.Parameters.AddWithValue("@BlockMinutes", (object?)blockMinutes ?? DBNull.Value);
+        command.Parameters.AddWithValue("@BlockAmount", (object?)blockAmount ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Note", (object?)note ?? DBNull.Value);
+        command.Parameters.AddWithValue("@SessionId", sessionId);
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException("No se pudo aplicar la tarifa personalizada (¿el vehículo ya salió?).");
+        }
+
+        AuditService.Log(userId, "TarifaPersonalizada", "ParkingSessions", sessionId.ToString(),
+            $"{rateType} {amount:0.00}{(note is null ? string.Empty : $" - {note}")}");
     }
 
     public DashboardStats GetDashboardStats(int currentUserId)
@@ -284,7 +357,19 @@ public sealed class ParkingService
         };
     }
 
-    public static decimal CalculateAmount(DateTime entryAt, DateTime exitAt, string rateType, decimal amount, int graceMinutes)
+    /// <summary>Calcula el monto a cobrar usando la tarifa efectiva de la estadía (incluye tarifa personalizada).</summary>
+    public static decimal CalculateAmount(ParkingSession session, DateTime exitAt) =>
+        CalculateAmount(session.EntryAt, exitAt, session.EffectiveRateType, session.EffectiveRateAmount,
+            session.EffectiveGraceMinutes, session.EffectiveBlockMinutes, session.EffectiveBlockAmount);
+
+    public static decimal CalculateAmount(
+        DateTime entryAt,
+        DateTime exitAt,
+        string rateType,
+        decimal amount,
+        int graceMinutes,
+        int? blockMinutes = null,
+        decimal? blockAmount = null)
     {
         var minutes = Math.Max(0, (exitAt - entryAt).TotalMinutes);
         if (minutes <= graceMinutes)
@@ -293,12 +378,26 @@ public sealed class ParkingService
         }
 
         var billableMinutes = Math.Max(1, minutes - graceMinutes);
+
+        // Tarifa por hora con tope por bloque: se cobra por hora (ej. ₡700) pero nunca más de
+        // BlockAmount (ej. ₡3000) por cada bloque de BlockMinutes (ej. 12h). Al pasarse del tope,
+        // la estadía se cobra automáticamente como tarifa diaria.
+        if (rateType == "Hora" && blockMinutes is int blockMin and > 0 && blockAmount is decimal cap and > 0)
+        {
+            var fullBlocks = (long)Math.Floor(billableMinutes / blockMin);
+            var remainderMinutes = billableMinutes - (fullBlocks * blockMin);
+            var remainderHours = remainderMinutes > 0 ? Math.Ceiling(remainderMinutes / 60d) : 0d;
+            var remainderCost = Math.Min(Convert.ToDecimal(remainderHours) * amount, cap);
+            return (fullBlocks * cap) + remainderCost;
+        }
+
         var units = rateType switch
         {
             "Hora" => Math.Ceiling(billableMinutes / 60d),
             "Dia" => Math.Ceiling(billableMinutes / 1440d),
             "Semana" => Math.Ceiling(billableMinutes / 10080d),
             "Mes" => Math.Ceiling(billableMinutes / 43200d),
+            "Fija" => 1d,
             _ => 1d
         };
 
@@ -318,14 +417,25 @@ public sealed class ParkingService
             r.RateType,
             r.Amount,
             r.GraceMinutes,
+            r.BlockMinutes,
+            r.BlockAmount,
             entered.FullName AS EnteredBy,
             exited.FullName AS ExitedBy,
             s.Status,
-            s.ChargedAmount
+            s.ChargedAmount,
+            s.ExtraAmount,
+            s.CustomRateType,
+            s.CustomRateAmount,
+            s.CustomGraceMinutes,
+            s.CustomBlockMinutes,
+            s.CustomBlockAmount,
+            s.CustomNote,
+            pay.PaymentMethod
         FROM dbo.ParkingSessions s
         INNER JOIN dbo.ParkingRates r ON r.RateId = s.RateId
         INNER JOIN dbo.Users entered ON entered.UserId = s.EnteredByUserId
         LEFT JOIN dbo.Users exited ON exited.UserId = s.ExitedByUserId
+        LEFT JOIN dbo.Payments pay ON pay.SessionId = s.SessionId
         """;
 
     private static ParkingSession MapSession(SqlDataReader reader) => new()
@@ -341,9 +451,31 @@ public sealed class ParkingService
         RateType = reader.GetString(reader.GetOrdinal("RateType")),
         RateAmount = reader.GetDecimal(reader.GetOrdinal("Amount")),
         GraceMinutes = reader.GetInt32(reader.GetOrdinal("GraceMinutes")),
+        BlockMinutes = GetNullableInt(reader, "BlockMinutes"),
+        BlockAmount = GetNullableDecimal(reader, "BlockAmount"),
         EnteredBy = reader.GetString(reader.GetOrdinal("EnteredBy")),
         ExitedBy = reader.IsDBNull(reader.GetOrdinal("ExitedBy")) ? null : reader.GetString(reader.GetOrdinal("ExitedBy")),
         Status = reader.GetString(reader.GetOrdinal("Status")),
-        ChargedAmount = reader.IsDBNull(reader.GetOrdinal("ChargedAmount")) ? null : reader.GetDecimal(reader.GetOrdinal("ChargedAmount"))
+        ChargedAmount = GetNullableDecimal(reader, "ChargedAmount"),
+        ExtraAmount = GetNullableDecimal(reader, "ExtraAmount"),
+        CustomRateType = reader.IsDBNull(reader.GetOrdinal("CustomRateType")) ? null : reader.GetString(reader.GetOrdinal("CustomRateType")),
+        CustomRateAmount = GetNullableDecimal(reader, "CustomRateAmount"),
+        CustomGraceMinutes = GetNullableInt(reader, "CustomGraceMinutes"),
+        CustomBlockMinutes = GetNullableInt(reader, "CustomBlockMinutes"),
+        CustomBlockAmount = GetNullableDecimal(reader, "CustomBlockAmount"),
+        CustomNote = reader.IsDBNull(reader.GetOrdinal("CustomNote")) ? null : reader.GetString(reader.GetOrdinal("CustomNote")),
+        PaymentMethod = reader.IsDBNull(reader.GetOrdinal("PaymentMethod")) ? null : reader.GetString(reader.GetOrdinal("PaymentMethod"))
     };
+
+    private static int? GetNullableInt(SqlDataReader reader, string column)
+    {
+        var ordinal = reader.GetOrdinal(column);
+        return reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
+    }
+
+    private static decimal? GetNullableDecimal(SqlDataReader reader, string column)
+    {
+        var ordinal = reader.GetOrdinal(column);
+        return reader.IsDBNull(ordinal) ? null : reader.GetDecimal(ordinal);
+    }
 }

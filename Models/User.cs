@@ -22,6 +22,7 @@ public static class PermissionKeys
     public const string Parking = "Parking";
     public const string Rates = "Rates";
     public const string Users = "Users";
+    public const string Income = "Income";
     public const string EmployeeClosure = "EmployeeClosure";
     public const string CashClosure = "CashClosure";
     public const string ClosureHistory = "ClosureHistory";
@@ -32,6 +33,7 @@ public static class PermissionKeys
         [Parking] = "Entrada / salida",
         [Rates] = "Tarifas",
         [Users] = "Usuarios",
+        [Income] = "Ingresos",
         [EmployeeClosure] = "Cierre de empleado",
         [CashClosure] = "Cierre de caja",
         [ClosureHistory] = "Historial de cierres"
@@ -43,6 +45,7 @@ public static class PermissionKeys
         Parking,
         Rates,
         Users,
+        Income,
         EmployeeClosure,
         CashClosure,
         ClosureHistory

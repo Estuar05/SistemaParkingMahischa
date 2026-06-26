@@ -7,6 +7,8 @@ namespace SistemaParkingMahischa.Services;
 
 public sealed class ClosureService
 {
+    private readonly IncomeService _incomeService = new();
+
     public List<ClosureHistoryRecord> GetEmployeeClosureHistory(DateTime fromDate, DateTime toDate)
     {
         var records = new List<ClosureHistoryRecord>();
@@ -25,6 +27,8 @@ public sealed class ClosureService
                 ec.ExpectedAmount,
                 ec.DeliveredAmount,
                 ec.DifferenceAmount,
+                ec.CashExpected,
+                ec.SinpeExpected,
                 ec.CreatedAt
             FROM dbo.EmployeeClosures ec
             INNER JOIN dbo.Users employee ON employee.UserId = ec.UserId
@@ -49,8 +53,15 @@ public sealed class ClosureService
                 ExpectedAmount = reader.GetDecimal(reader.GetOrdinal("ExpectedAmount")),
                 DeliveredAmount = reader.GetDecimal(reader.GetOrdinal("DeliveredAmount")),
                 DifferenceAmount = reader.GetDecimal(reader.GetOrdinal("DifferenceAmount")),
+                CashAmount = reader.GetDecimal(reader.GetOrdinal("CashExpected")),
+                SinpeAmount = reader.GetDecimal(reader.GetOrdinal("SinpeExpected")),
                 CreatedAt = reader.GetDateTime(reader.GetOrdinal("CreatedAt"))
             });
+        }
+
+        foreach (var record in records)
+        {
+            record.Denominations = GetEmployeeDenominations(record.ClosureId);
         }
 
         return records;
@@ -69,6 +80,7 @@ public sealed class ClosureService
                 cc.ClosureDate,
                 cc.MinimumCashAmount,
                 cc.SystemAmount,
+                cc.SinpeAmount,
                 cc.CountedAmount,
                 cc.DifferenceAmount,
                 cc.CreatedAt,
@@ -93,6 +105,8 @@ public sealed class ClosureService
                 ToAt = reader.GetDateTime(reader.GetOrdinal("ClosureDate")),
                 MinimumCashAmount = reader.GetDecimal(reader.GetOrdinal("MinimumCashAmount")),
                 SystemAmount = reader.GetDecimal(reader.GetOrdinal("SystemAmount")),
+                CashAmount = reader.GetDecimal(reader.GetOrdinal("SystemAmount")),
+                SinpeAmount = reader.GetDecimal(reader.GetOrdinal("SinpeAmount")),
                 CountedAmount = reader.GetDecimal(reader.GetOrdinal("CountedAmount")),
                 DifferenceAmount = reader.GetDecimal(reader.GetOrdinal("DifferenceAmount")),
                 CreatedAt = reader.GetDateTime(reader.GetOrdinal("CreatedAt"))
@@ -107,20 +121,26 @@ public sealed class ClosureService
         return records;
     }
 
-    public List<CashDenominationDetail> GetCashDenominations(long cashClosureId)
+    public List<CashDenominationDetail> GetCashDenominations(long cashClosureId) =>
+        GetDenominations("dbo.CashClosureDenominations", "CashClosureId", cashClosureId);
+
+    public List<CashDenominationDetail> GetEmployeeDenominations(long employeeClosureId) =>
+        GetDenominations("dbo.EmployeeClosureDenominations", "EmployeeClosureId", employeeClosureId);
+
+    private static List<CashDenominationDetail> GetDenominations(string table, string keyColumn, long keyValue)
     {
         var details = new List<CashDenominationDetail>();
         using var connection = SqlDatabase.CreateConnection();
         connection.Open();
 
         using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT Denomination, Quantity
-            FROM dbo.CashClosureDenominations
-            WHERE CashClosureId = @CashClosureId
+            FROM {table}
+            WHERE {keyColumn} = @Key
             ORDER BY Denomination DESC;
             """;
-        command.Parameters.AddWithValue("@CashClosureId", cashClosureId);
+        command.Parameters.AddWithValue("@Key", keyValue);
 
         using var reader = command.ExecuteReader();
         while (reader.Read())
@@ -135,97 +155,107 @@ public sealed class ClosureService
         return details;
     }
 
-    public decimal GetExpectedForUser(int userId, DateTime fromAt, DateTime toAt)
+    /// <summary>Totales (efectivo / SINPE) cobrados por un empleado en el periodo.</summary>
+    public IncomeSummary GetUserTotals(int userId, DateTime fromAt, DateTime toAt) =>
+        _incomeService.GetSummary(fromAt, toAt, userId);
+
+    public decimal GetExpectedForUser(int userId, DateTime fromAt, DateTime toAt) =>
+        _incomeService.GetSummary(fromAt, toAt, userId).Cash;
+
+    public EmployeeClosure CreateEmployeeClosure(
+        int userId,
+        DateTime fromAt,
+        DateTime toAt,
+        IReadOnlyDictionary<decimal, int> denominations,
+        int createdByUserId)
     {
+        var totals = _incomeService.GetSummary(fromAt, toAt, userId);
+        var cashExpected = totals.Cash;
+        var deliveredAmount = denominations.Sum(item => item.Key * item.Value);
+
         using var connection = SqlDatabase.CreateConnection();
         connection.Open();
+        using var transaction = connection.BeginTransaction();
 
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT COALESCE(SUM(Amount), 0)
-            FROM dbo.Payments
-            WHERE UserId = @UserId AND PaidAt >= @FromAt AND PaidAt <= @ToAt;
-            """;
-        command.Parameters.AddWithValue("@UserId", userId);
-        command.Parameters.AddWithValue("@FromAt", fromAt);
-        command.Parameters.AddWithValue("@ToAt", toAt);
-        return Convert.ToDecimal(command.ExecuteScalar());
-    }
-
-    public EmployeeClosure CreateEmployeeClosure(int userId, DateTime fromAt, DateTime toAt, decimal deliveredAmount, int createdByUserId)
-    {
-        var expected = GetExpectedForUser(userId, fromAt, toAt);
-        using var connection = SqlDatabase.CreateConnection();
-        connection.Open();
-
-        using (var duplicate = connection.CreateCommand())
+        try
         {
-            duplicate.CommandText = """
-                SELECT COUNT(1)
-                FROM dbo.EmployeeClosures
-                WHERE UserId = @UserId
-                  AND CreatedByUserId = @CreatedByUserId
-                  AND CreatedAt >= DATEADD(second, -5, SYSDATETIME());
-                """;
-            duplicate.Parameters.AddWithValue("@UserId", userId);
-            duplicate.Parameters.AddWithValue("@CreatedByUserId", createdByUserId);
-            if (Convert.ToInt32(duplicate.ExecuteScalar()) > 0)
+            using (var duplicate = connection.CreateCommand())
             {
-                throw new InvalidOperationException("Ya se registro un cierre de empleado hace pocos segundos. Espere antes de intentar de nuevo.");
+                duplicate.Transaction = transaction;
+                duplicate.CommandText = """
+                    SELECT COUNT(1)
+                    FROM dbo.EmployeeClosures
+                    WHERE UserId = @UserId
+                      AND CreatedByUserId = @CreatedByUserId
+                      AND CreatedAt >= DATEADD(second, -5, SYSDATETIME());
+                    """;
+                duplicate.Parameters.AddWithValue("@UserId", userId);
+                duplicate.Parameters.AddWithValue("@CreatedByUserId", createdByUserId);
+                if (Convert.ToInt32(duplicate.ExecuteScalar()) > 0)
+                {
+                    throw new InvalidOperationException("Ya se registro un cierre de empleado hace pocos segundos. Espere antes de intentar de nuevo.");
+                }
             }
+
+            long closureId;
+            DateTime createdAt;
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = """
+                    INSERT INTO dbo.EmployeeClosures(UserId, FromAt, ToAt, ExpectedAmount, DeliveredAmount, CashExpected, SinpeExpected, CreatedByUserId)
+                    OUTPUT INSERTED.EmployeeClosureId, INSERTED.CreatedAt
+                    VALUES (@UserId, @FromAt, @ToAt, @ExpectedAmount, @DeliveredAmount, @CashExpected, @SinpeExpected, @CreatedByUserId);
+                    """;
+                command.Parameters.AddWithValue("@UserId", userId);
+                command.Parameters.AddWithValue("@FromAt", fromAt);
+                command.Parameters.AddWithValue("@ToAt", toAt);
+                command.Parameters.AddWithValue("@ExpectedAmount", cashExpected);
+                command.Parameters.AddWithValue("@DeliveredAmount", deliveredAmount);
+                command.Parameters.AddWithValue("@CashExpected", cashExpected);
+                command.Parameters.AddWithValue("@SinpeExpected", totals.Sinpe);
+                command.Parameters.AddWithValue("@CreatedByUserId", createdByUserId);
+                using var reader = command.ExecuteReader();
+                reader.Read();
+                closureId = reader.GetInt64(0);
+                createdAt = reader.GetDateTime(1);
+            }
+
+            InsertDenominations(connection, transaction, "dbo.EmployeeClosureDenominations", "EmployeeClosureId", closureId, denominations);
+
+            transaction.Commit();
+            AuditService.Log(createdByUserId, "CierreEmpleado", "EmployeeClosures", closureId.ToString(),
+                $"Empleado {userId}, efectivo esperado {cashExpected:0.00}, entregado {deliveredAmount:0.00}, SINPE {totals.Sinpe:0.00}");
+
+            return new EmployeeClosure
+            {
+                ClosureId = closureId,
+                UserId = userId,
+                FromAt = fromAt,
+                ToAt = toAt,
+                ExpectedAmount = cashExpected,
+                DeliveredAmount = deliveredAmount,
+                DifferenceAmount = deliveredAmount - cashExpected,
+                CashExpected = cashExpected,
+                SinpeExpected = totals.Sinpe,
+                CreatedAt = createdAt
+            };
         }
-
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT INTO dbo.EmployeeClosures(UserId, FromAt, ToAt, ExpectedAmount, DeliveredAmount, CreatedByUserId)
-            OUTPUT INSERTED.EmployeeClosureId, INSERTED.CreatedAt
-            VALUES (@UserId, @FromAt, @ToAt, @ExpectedAmount, @DeliveredAmount, @CreatedByUserId);
-            """;
-        command.Parameters.AddWithValue("@UserId", userId);
-        command.Parameters.AddWithValue("@FromAt", fromAt);
-        command.Parameters.AddWithValue("@ToAt", toAt);
-        command.Parameters.AddWithValue("@ExpectedAmount", expected);
-        command.Parameters.AddWithValue("@DeliveredAmount", deliveredAmount);
-        command.Parameters.AddWithValue("@CreatedByUserId", createdByUserId);
-
-        using var reader = command.ExecuteReader();
-        reader.Read();
-        var closure = new EmployeeClosure
+        catch
         {
-            ClosureId = reader.GetInt64(0),
-            UserId = userId,
-            FromAt = fromAt,
-            ToAt = toAt,
-            ExpectedAmount = expected,
-            DeliveredAmount = deliveredAmount,
-            DifferenceAmount = deliveredAmount - expected,
-            CreatedAt = reader.GetDateTime(1)
-        };
-        reader.Close();
-        AuditService.Log(createdByUserId, "CierreEmpleado", "EmployeeClosures", closure.ClosureId.ToString(),
-            $"Empleado {userId}, esperado {expected:0.00}, entregado {deliveredAmount:0.00}");
-        return closure;
+            transaction.Rollback();
+            throw;
+        }
     }
 
-    public decimal GetSystemCashForDate(DateTime date)
-    {
-        using var connection = SqlDatabase.CreateConnection();
-        connection.Open();
+    public decimal GetSystemCashForDate(DateTime date) => _incomeService.GetSummaryForDate(date).Cash;
 
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT COALESCE(SUM(Amount), 0)
-            FROM dbo.Payments
-            WHERE CONVERT(date, PaidAt) = @ClosureDate;
-            """;
-        command.Parameters.AddWithValue("@ClosureDate", date.Date);
-        return Convert.ToDecimal(command.ExecuteScalar());
-    }
+    public IncomeSummary GetSummaryForDate(DateTime date) => _incomeService.GetSummaryForDate(date);
 
     public long CreateCashClosure(DateTime date, IReadOnlyDictionary<decimal, int> denominations, int createdByUserId)
     {
         var countedAmount = denominations.Sum(item => item.Key * item.Value);
-        var systemAmount = GetSystemCashForDate(date);
+        var totals = _incomeService.GetSummaryForDate(date);
 
         using var connection = SqlDatabase.CreateConnection();
         connection.Open();
@@ -254,41 +284,53 @@ public sealed class ClosureService
             {
                 command.Transaction = transaction;
                 command.CommandText = """
-                    INSERT INTO dbo.CashClosures(ClosureDate, MinimumCashAmount, SystemAmount, CountedAmount, CreatedByUserId)
+                    INSERT INTO dbo.CashClosures(ClosureDate, MinimumCashAmount, SystemAmount, SinpeAmount, CountedAmount, CreatedByUserId)
                     OUTPUT INSERTED.CashClosureId
-                    VALUES (@ClosureDate, @MinimumCashAmount, @SystemAmount, @CountedAmount, @CreatedByUserId);
+                    VALUES (@ClosureDate, @MinimumCashAmount, @SystemAmount, @SinpeAmount, @CountedAmount, @CreatedByUserId);
                     """;
                 command.Parameters.AddWithValue("@ClosureDate", date.Date);
                 command.Parameters.AddWithValue("@MinimumCashAmount", AppSettings.MinimumCashAmount);
-                command.Parameters.AddWithValue("@SystemAmount", systemAmount);
+                command.Parameters.AddWithValue("@SystemAmount", totals.Cash);
+                command.Parameters.AddWithValue("@SinpeAmount", totals.Sinpe);
                 command.Parameters.AddWithValue("@CountedAmount", countedAmount);
                 command.Parameters.AddWithValue("@CreatedByUserId", createdByUserId);
                 closureId = Convert.ToInt64(command.ExecuteScalar());
             }
 
-            foreach (var item in denominations.Where(item => item.Value > 0))
-            {
-                using var detail = connection.CreateCommand();
-                detail.Transaction = transaction;
-                detail.CommandText = """
-                    INSERT INTO dbo.CashClosureDenominations(CashClosureId, Denomination, Quantity)
-                    VALUES (@CashClosureId, @Denomination, @Quantity);
-                    """;
-                detail.Parameters.AddWithValue("@CashClosureId", closureId);
-                detail.Parameters.AddWithValue("@Denomination", item.Key);
-                detail.Parameters.AddWithValue("@Quantity", item.Value);
-                detail.ExecuteNonQuery();
-            }
+            InsertDenominations(connection, transaction, "dbo.CashClosureDenominations", "CashClosureId", closureId, denominations);
 
             transaction.Commit();
             AuditService.Log(createdByUserId, "CierreCaja", "CashClosures", closureId.ToString(),
-                $"Sistema {systemAmount:0.00}, contado {countedAmount:0.00}");
+                $"Efectivo {totals.Cash:0.00}, SINPE {totals.Sinpe:0.00}, contado {countedAmount:0.00}");
             return closureId;
         }
         catch
         {
             transaction.Rollback();
             throw;
+        }
+    }
+
+    private static void InsertDenominations(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        string table,
+        string keyColumn,
+        long keyValue,
+        IReadOnlyDictionary<decimal, int> denominations)
+    {
+        foreach (var item in denominations.Where(item => item.Value > 0))
+        {
+            using var detail = connection.CreateCommand();
+            detail.Transaction = transaction;
+            detail.CommandText = $"""
+                INSERT INTO {table}({keyColumn}, Denomination, Quantity)
+                VALUES (@Key, @Denomination, @Quantity);
+                """;
+            detail.Parameters.AddWithValue("@Key", keyValue);
+            detail.Parameters.AddWithValue("@Denomination", item.Key);
+            detail.Parameters.AddWithValue("@Quantity", item.Value);
+            detail.ExecuteNonQuery();
         }
     }
 }

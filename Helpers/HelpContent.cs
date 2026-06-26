@@ -22,8 +22,8 @@ public static class HelpContent
             TARJETAS (arriba):
             • Vehículos activos: cuántos autos están DENTRO del parqueo en este momento.
             • Salidas hoy: cuántos vehículos salieron y pagaron hoy.
-            • Caja del día: total de dinero cobrado hoy por todos los empleados.
-            • Cobrado por mí: total que USTED ha cobrado hoy.
+            • Efectivo hoy: total cobrado hoy en EFECTIVO.
+            • SINPE hoy: total cobrado hoy por SINPE.
 
             TABLA (abajo):
             La lista de vehículos que están dentro del parqueo ahora mismo, con su placa,
@@ -55,12 +55,41 @@ public static class HelpContent
             2. Haga clic en el vehículo en la lista.
             3. Presione 'Registrar salida' y confirme.
 
+            ── AL COBRAR (ventana de cobro) ──
+            Al registrar la salida se abre la ventana de COBRO:
+            • MONTO EXTRA: si el cliente se pasó unos minutos, puede sumar un monto adicional.
+            • FORMA DE PAGO: elija 'Efectivo' o 'SINPE'.
+            • En EFECTIVO puede escribir con cuánto paga el cliente ('Paga con') y el sistema
+              calcula automáticamente el VUELTO.
+            • En SINPE puede anotar la referencia o comprobante (opcional).
+
+            ── TARIFA PERSONALIZADA ──
+            Para cobrar diferente a un cliente puntual: seleccione el vehículo y presione
+            'Tarifa personalizada'. Defina la unidad (hora/día/semana/mes/fija) y el monto.
+            Se aplica SOLO a esa estadía y queda registrada.
+
             ── OTRAS OPCIONES ──
-            • 'Reimprimir tiquete': vuelve a imprimir el tiquete del vehículo seleccionado
-              (por si el cliente lo perdió).
+            • 'Reimprimir': vuelve a imprimir el tiquete del vehículo seleccionado.
             • 'Ocultar vehículos con salida': muestra solo los autos que siguen adentro.
 
-            El monto a cobrar lo calcula el sistema solo, según la tarifa y el tiempo que estuvo el auto.
+            La tarifa por hora se cobra por hora, pero al pasar del tope de ₡3000 por cada 12 horas
+            se cobra automáticamente como tarifa diaria.
+            """,
+
+        ["Ingresos"] =
+            """
+            El módulo INGRESOS muestra todo el dinero cobrado (cada salida es un ingreso).
+
+            ── BUSCAR INGRESOS ──
+            1. Elija el rango DESDE / HASTA.
+            2. (Opcional) Filtre por FORMA DE PAGO (Efectivo / SINPE) o por EMPLEADO.
+            3. Presione 'Buscar'.
+
+            Arriba se ven los TOTALES: efectivo, SINPE, total y cantidad de cobros.
+            La tabla muestra cada cobro con su placa, tarifa, forma de pago, monto y empleado.
+
+            ── DESCARGAR PDF ──
+            Presione 'Descargar PDF del rango' para guardar un reporte de los ingresos del rango.
             """,
 
         ["Tarifas"] =
@@ -77,8 +106,11 @@ public static class HelpContent
             4. Escriba el MONTO en colones.
             5. MINUTOS DE GRACIA: minutos al inicio que NO se cobran
                (ejemplo: 10 = los primeros 10 minutos son gratis).
-            6. Marque 'Activa' para que la tarifa aparezca al registrar entradas.
-            7. Presione 'Guardar tarifa'.
+            6. TOPE POR 12H (solo tarifas por hora): si lo marca, la tarifa cobra por hora pero
+               nunca más del monto indicado por cada 12 horas. Al pasar de ese tope, la estadía
+               se cobra como tarifa diaria. Ejemplo: ₡700/hora con tope de ₡3000 por 12h.
+            7. Marque 'Activa' para que la tarifa aparezca al registrar entradas.
+            8. Presione 'Guardar tarifa'.
 
             ── EDITAR UNA TARIFA ──
             Haga clic en una tarifa de la lista, cambie lo que necesite y presione 'Guardar tarifa'.
@@ -118,11 +150,12 @@ public static class HelpContent
             ═══ PESTAÑA 'REGISTRAR CIERRES' ═══
 
             ── CIERRE DE EMPLEADO (lado izquierdo) ──
-            Sirve para saber cuánto debe entregar un empleado.
+            Sirve para saber cuánto EFECTIVO debe entregar un empleado.
             1. Elija el EMPLEADO.
             2. Elija el rango DESDE / HASTA (las fechas y horas del turno).
-            3. Presione 'Calcular esperado' para ver cuánto cobró ese empleado.
-            4. Escriba el MONTO ENTREGADO (lo que el empleado entrega físicamente).
+            3. Presione 'Calcular esperado'. El sistema muestra el EFECTIVO esperado y, aparte,
+               cuánto cobró por SINPE (el SINPE no se entrega en físico).
+            4. Cuente los billetes y monedas ENTREGADOS y escriba la cantidad de cada uno.
             5. Presione 'Cerrar empleado'. El sistema muestra si hay diferencia.
 
             ── CIERRE DE CAJA (lado derecho) ──
@@ -131,8 +164,9 @@ public static class HelpContent
 
             El sistema le muestra:
             • Fondo de caja (base): los ₡20 000 que siempre deben estar.
-            • Cobrado hoy (sistema): lo que el sistema dice que se cobró hoy.
-            • Esperado en caja: el fondo base + lo cobrado (lo que DEBERÍA haber en la caja).
+            • Efectivo cobrado hoy: el efectivo que se cobró hoy (el SINPE se muestra aparte).
+            • Esperado en caja: el fondo base + el efectivo cobrado (lo que DEBERÍA haber en físico).
+            El SINPE NO se cuenta en la caja física, por eso se muestra por separado.
 
             Pasos:
             1. Cuente los billetes y monedas y escriba la cantidad de cada uno.

@@ -35,7 +35,7 @@ public sealed class VehicleInfoForm : Form
 
         var active = _session.Status == "A";
         var amount = active
-            ? ParkingService.CalculateAmount(_session.EntryAt, DateTime.Now, _session.RateType, _session.RateAmount, _session.GraceMinutes)
+            ? ParkingService.CalculateAmount(_session, DateTime.Now)
             : _session.ChargedAmount ?? 0;
 
         var accent = new Panel { BackColor = active ? Color.FromArgb(22, 163, 74) : Color.FromArgb(100, 116, 139), Dock = DockStyle.Top, Height = 6 };
@@ -114,22 +114,27 @@ public sealed class VehicleInfoForm : Form
     {
         try
         {
-            var amount = ParkingService.CalculateAmount(_session.EntryAt, DateTime.Now, _session.RateType, _session.RateAmount, _session.GraceMinutes);
-            var confirm = MessageBox.Show(
-                $"¿Registrar la salida y cobrar?\n\nPlaca: {_session.Plate}\nMonto a cobrar: {MoneyHelper.Format(amount)}",
-                "Confirmar salida",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-            if (confirm != DialogResult.Yes)
+            using var dialog = new ExitPaymentForm(_session);
+            if (dialog.ShowDialog(this) != DialogResult.OK)
             {
                 return;
             }
 
-            var closed = _controller.RegisterExit(_session.SessionId, _currentUser.UserId);
+            var closed = _controller.RegisterExit(
+                _session.SessionId,
+                _currentUser.UserId,
+                dialog.ExtraAmount,
+                dialog.PaymentMethod,
+                dialog.Reference,
+                dialog.TenderedAmount);
             _session = closed;
             ChangesMade = true;
+
+            var changeText = dialog.PaymentMethod == PaymentMethods.Cash && dialog.TenderedAmount is { } tendered
+                ? $"\nPaga con: {MoneyHelper.Format(tendered)}\nVuelto: {MoneyHelper.Format(tendered - (closed.ChargedAmount ?? 0))}"
+                : string.Empty;
             MessageBox.Show(
-                $"Salida registrada.\n\nPlaca: {closed.Plate}\nMonto cobrado: {MoneyHelper.Format(closed.ChargedAmount ?? 0)}",
+                $"Salida registrada.\n\nPlaca: {closed.Plate}\nForma de pago: {dialog.PaymentMethod}\nTotal cobrado: {MoneyHelper.Format(closed.ChargedAmount ?? 0)}{changeText}",
                 "Cobro",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);

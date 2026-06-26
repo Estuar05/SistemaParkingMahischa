@@ -10,6 +10,8 @@ public sealed class EmployeeClosure
     public decimal ExpectedAmount { get; set; }
     public decimal DeliveredAmount { get; set; }
     public decimal DifferenceAmount { get; set; }
+    public decimal CashExpected { get; set; }
+    public decimal SinpeExpected { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 

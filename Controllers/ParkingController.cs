@@ -9,6 +9,7 @@ public sealed class ParkingController
     private readonly RateService _rateService = new();
     private readonly AuthService _authService = new();
     private readonly ClosureService _closureService = new();
+    private readonly IncomeService _incomeService = new();
 
     public List<ParkingRate> GetActiveRates() => _rateService.GetRates(activeOnly: true);
 
@@ -25,7 +26,19 @@ public sealed class ParkingController
 
     public List<ParkingSession> GetSessions(bool activeOnly = true) => _parkingService.GetSessions(activeOnly);
 
-    public ParkingSession RegisterExit(long sessionId, int userId) => _parkingService.RegisterExit(sessionId, userId);
+    public ParkingSession RegisterExit(
+        long sessionId,
+        int userId,
+        decimal extraAmount = 0m,
+        string paymentMethod = PaymentMethods.Cash,
+        string? reference = null,
+        decimal? tenderedAmount = null) =>
+        _parkingService.RegisterExit(sessionId, userId, extraAmount, paymentMethod, reference, tenderedAmount);
+
+    public void SetCustomRate(long sessionId, string rateType, decimal amount, int graceMinutes, int? blockMinutes, decimal? blockAmount, string? note, int userId) =>
+        _parkingService.SetCustomRate(sessionId, rateType, amount, graceMinutes, blockMinutes, blockAmount, note, userId);
+
+    public ParkingSession? GetSession(long sessionId) => _parkingService.GetSessionById(sessionId);
 
     public DashboardStats GetStats(int userId) => _parkingService.GetDashboardStats(userId);
 
@@ -45,10 +58,21 @@ public sealed class ParkingController
     public decimal GetExpectedForUser(int userId, DateTime fromAt, DateTime toAt) =>
         _closureService.GetExpectedForUser(userId, fromAt, toAt);
 
-    public EmployeeClosure CreateEmployeeClosure(int userId, DateTime fromAt, DateTime toAt, decimal deliveredAmount, int createdByUserId) =>
-        _closureService.CreateEmployeeClosure(userId, fromAt, toAt, deliveredAmount, createdByUserId);
+    public IncomeSummary GetUserTotals(int userId, DateTime fromAt, DateTime toAt) =>
+        _closureService.GetUserTotals(userId, fromAt, toAt);
+
+    public EmployeeClosure CreateEmployeeClosure(int userId, DateTime fromAt, DateTime toAt, IReadOnlyDictionary<decimal, int> denominations, int createdByUserId) =>
+        _closureService.CreateEmployeeClosure(userId, fromAt, toAt, denominations, createdByUserId);
 
     public decimal GetSystemCashForDate(DateTime date) => _closureService.GetSystemCashForDate(date);
+
+    public IncomeSummary GetSummaryForDate(DateTime date) => _closureService.GetSummaryForDate(date);
+
+    public List<IncomeRecord> GetIncome(DateTime fromAt, DateTime toAt, string? paymentMethod = null, int? userId = null) =>
+        _incomeService.GetIncome(fromAt, toAt, paymentMethod, userId);
+
+    public IncomeSummary GetIncomeSummary(DateTime fromAt, DateTime toAt, int? userId = null) =>
+        _incomeService.GetSummary(fromAt, toAt, userId);
 
     public long CreateCashClosure(DateTime date, IReadOnlyDictionary<decimal, int> denominations, int createdByUserId) =>
         _closureService.CreateCashClosure(date, denominations, createdByUserId);

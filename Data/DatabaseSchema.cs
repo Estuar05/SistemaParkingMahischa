@@ -220,6 +220,72 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_Users_IdentificationNu
     CREATE UNIQUE INDEX UX_Users_IdentificationNumber ON dbo.Users(IdentificationNumber) WHERE IdentificationNumber IS NOT NULL;
 GO
 
+-- Tarifa por hora con tope (ej. ₡700/hora pero máximo ₡3000 por cada bloque de 12 horas).
+IF COL_LENGTH('dbo.ParkingRates', 'BlockMinutes') IS NULL
+    ALTER TABLE dbo.ParkingRates ADD BlockMinutes int NULL;
+GO
+IF COL_LENGTH('dbo.ParkingRates', 'BlockAmount') IS NULL
+    ALTER TABLE dbo.ParkingRates ADD BlockAmount decimal(18,2) NULL;
+GO
+
+-- Tarifa personalizada aplicada solo a una estadía (no se guarda como tarifa global).
+IF COL_LENGTH('dbo.ParkingSessions', 'CustomRateType') IS NULL
+    ALTER TABLE dbo.ParkingSessions ADD CustomRateType nvarchar(30) NULL;
+GO
+IF COL_LENGTH('dbo.ParkingSessions', 'CustomRateAmount') IS NULL
+    ALTER TABLE dbo.ParkingSessions ADD CustomRateAmount decimal(18,2) NULL;
+GO
+IF COL_LENGTH('dbo.ParkingSessions', 'CustomGraceMinutes') IS NULL
+    ALTER TABLE dbo.ParkingSessions ADD CustomGraceMinutes int NULL;
+GO
+IF COL_LENGTH('dbo.ParkingSessions', 'CustomBlockMinutes') IS NULL
+    ALTER TABLE dbo.ParkingSessions ADD CustomBlockMinutes int NULL;
+GO
+IF COL_LENGTH('dbo.ParkingSessions', 'CustomBlockAmount') IS NULL
+    ALTER TABLE dbo.ParkingSessions ADD CustomBlockAmount decimal(18,2) NULL;
+GO
+IF COL_LENGTH('dbo.ParkingSessions', 'CustomNote') IS NULL
+    ALTER TABLE dbo.ParkingSessions ADD CustomNote nvarchar(250) NULL;
+GO
+IF COL_LENGTH('dbo.ParkingSessions', 'ExtraAmount') IS NULL
+    ALTER TABLE dbo.ParkingSessions ADD ExtraAmount decimal(18,2) NULL;
+GO
+
+-- Detalle de la forma de pago (efectivo entregado / vuelto) para reportes e ingresos.
+IF COL_LENGTH('dbo.Payments', 'TenderedAmount') IS NULL
+    ALTER TABLE dbo.Payments ADD TenderedAmount decimal(18,2) NULL;
+GO
+IF COL_LENGTH('dbo.Payments', 'ChangeAmount') IS NULL
+    ALTER TABLE dbo.Payments ADD ChangeAmount decimal(18,2) NULL;
+GO
+
+-- Desglose por forma de pago en los cierres.
+IF COL_LENGTH('dbo.CashClosures', 'SinpeAmount') IS NULL
+    ALTER TABLE dbo.CashClosures ADD SinpeAmount decimal(18,2) NOT NULL CONSTRAINT DF_CashClosures_Sinpe DEFAULT(0);
+GO
+IF COL_LENGTH('dbo.EmployeeClosures', 'CashExpected') IS NULL
+    ALTER TABLE dbo.EmployeeClosures ADD CashExpected decimal(18,2) NOT NULL CONSTRAINT DF_EmployeeClosures_Cash DEFAULT(0);
+GO
+IF COL_LENGTH('dbo.EmployeeClosures', 'SinpeExpected') IS NULL
+    ALTER TABLE dbo.EmployeeClosures ADD SinpeExpected decimal(18,2) NOT NULL CONSTRAINT DF_EmployeeClosures_Sinpe DEFAULT(0);
+GO
+
+-- Conteo de billetes y monedas para el cierre de empleado (igual que el de caja).
+IF OBJECT_ID('dbo.EmployeeClosureDenominations', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.EmployeeClosureDenominations
+    (
+        EmployeeClosureDenominationId bigint IDENTITY(1,1) NOT NULL CONSTRAINT PK_EmployeeClosureDenominations PRIMARY KEY,
+        EmployeeClosureId bigint NOT NULL,
+        Denomination decimal(18,2) NOT NULL,
+        Quantity int NOT NULL,
+        TotalAmount AS (Denomination * Quantity) PERSISTED,
+        CONSTRAINT FK_EmployeeClosureDenominations_EmployeeClosures FOREIGN KEY(EmployeeClosureId) REFERENCES dbo.EmployeeClosures(EmployeeClosureId),
+        CONSTRAINT CK_EmployeeClosureDenominations_Qty CHECK(Quantity >= 0)
+    );
+END
+GO
+
 IF NOT EXISTS (SELECT 1 FROM dbo.Roles WHERE RoleName = N'Administrador')
     INSERT INTO dbo.Roles(RoleName) VALUES (N'Administrador');
 IF NOT EXISTS (SELECT 1 FROM dbo.Roles WHERE RoleName = N'Empleado')
@@ -228,12 +294,27 @@ GO
 
 IF NOT EXISTS (SELECT 1 FROM dbo.ParkingRates)
 BEGIN
-    INSERT INTO dbo.ParkingRates(RateName, RateType, Amount, GraceMinutes, SortOrder)
+    INSERT INTO dbo.ParkingRates(RateName, RateType, Amount, GraceMinutes, SortOrder, BlockMinutes, BlockAmount)
     VALUES
-        (N'Por hora', N'Hora', 1000, 10, 1),
-        (N'Por día', N'Dia', 6000, 15, 2),
-        (N'Semanal', N'Semana', 30000, 30, 3),
-        (N'Mensual', N'Mes', 90000, 60, 4);
+        (N'Por hora', N'Hora', 700, 10, 1, 720, 3000),
+        (N'Semanal', N'Semana', 30000, 30, 3, NULL, NULL),
+        (N'Mensual', N'Mes', 90000, 60, 4, NULL, NULL);
+END
+GO
+
+-- Migración de una sola vez (se ejecuta mientras exista una tarifa por hora sin tope):
+-- la tarifa por hora pasa a ₡700/h con tope de ₡3000 por cada 12h, y se desactiva la
+-- tarifa "Por día" de 24h porque la diaria ahora es el tope de 12h. Tras la migración el
+-- administrador puede reactivar/ajustar libremente desde el módulo Tarifas.
+IF EXISTS (SELECT 1 FROM dbo.ParkingRates WHERE RateType = N'Hora' AND BlockMinutes IS NULL)
+BEGIN
+    UPDATE dbo.ParkingRates
+    SET Amount = 700, BlockMinutes = 720, BlockAmount = 3000
+    WHERE RateType = N'Hora' AND BlockMinutes IS NULL;
+
+    UPDATE dbo.ParkingRates
+    SET IsActive = 0
+    WHERE RateName = N'Por día' AND RateType = N'Dia';
 END
 GO
 """;

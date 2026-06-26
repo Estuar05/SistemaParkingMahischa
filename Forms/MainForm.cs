@@ -16,12 +16,21 @@ public partial class MainForm : Form
     private readonly Color _sidebar = Color.FromArgb(21, 32, 43);
     private readonly Color _sidebarHover = Color.FromArgb(33, 47, 62);
     private readonly PdfExportService _pdfExportService = new();
+
+    // Paneles de cada módulo: se construyen una sola vez y se muestran/ocultan, de modo que la
+    // información escrita (cierres, placas, etc.) no se pierde al cambiar de módulo.
+    private readonly Dictionary<string, Control> _modulePanels = new();
+    private readonly Dictionary<string, Action> _moduleRefreshers = new();
+
+    private Button? _btnIncome;
     private Panel? _navIndicator;
     private readonly System.Windows.Forms.Timer _indicatorTimer = new() { Interval = 12 };
     private int _indicatorTarget;
     private Button? _activeMenuButton;
     private Button? _btnUpdate;
     private string _currentHelpKey = "Panel";
+
+    private static readonly decimal[] DenominationValues = [20000m, 10000m, 5000m, 2000m, 1000m, 500m, 100m, 50m, 25m, 10m, 5m];
 
     public MainForm(User currentUser)
     {
@@ -167,8 +176,8 @@ public partial class MainForm : Form
             BackColor = _sidebar,
             TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(14, 0, 0, 0),
-            Size = new Size(194, 42),
-            Location = new Point(18, 386),
+            Size = new Size(194, 40),
+            Location = new Point(18, 404),
             UseVisualStyleBackColor = false,
             Cursor = Cursors.Hand
         };
@@ -194,16 +203,16 @@ public partial class MainForm : Form
         {
             Image = logo,
             SizeMode = PictureBoxSizeMode.Zoom,
-            Size = new Size(46, 46),
-            Location = new Point(18, 20),
+            Size = new Size(42, 42),
+            Location = new Point(18, 18),
             BackColor = Color.Transparent
         };
         pnlSidebar.Controls.Add(picLogo);
         picLogo.BringToFront();
 
-        lblBrand.Location = new Point(74, 28);
-        lblBrand.Size = new Size(148, 50);
-        lblBrand.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
+        lblBrand.Location = new Point(70, 24);
+        lblBrand.Size = new Size(152, 44);
+        lblBrand.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
     }
 
     protected override void OnShown(EventArgs e)
@@ -217,10 +226,45 @@ public partial class MainForm : Form
     {
         UiKit.EnableDoubleBuffer(pnlSidebar);
 
+        // Reorganiza los botones del menú en pasos compactos y agrega "Ingresos".
+        var y = 110;
+        const int step = 46;
+        foreach (var button in new[] { btnDashboard, btnParking, btnRates })
+        {
+            button.Size = new Size(194, 40);
+            button.Location = new Point(18, y);
+            y += step;
+        }
+
+        _btnIncome = new Button
+        {
+            Text = "Ingresos",
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(235, 241, 245),
+            BackColor = _sidebar,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(14, 0, 0, 0),
+            Size = new Size(194, 40),
+            Location = new Point(18, y),
+            UseVisualStyleBackColor = false,
+            Cursor = Cursors.Hand,
+            Enabled = _currentUser.HasPermission(PermissionKeys.Income)
+        };
+        _btnIncome.Click += (_, _) => RunPermissionAction(PermissionKeys.Income, ShowIncome);
+        pnlSidebar.Controls.Add(_btnIncome);
+        y += step;
+
+        btnUsers.Size = new Size(194, 40);
+        btnUsers.Location = new Point(18, y);
+        y += step;
+        btnClosures.Size = new Size(194, 40);
+        btnClosures.Location = new Point(18, y);
+
         _navIndicator = new Panel
         {
             BackColor = _accent,
-            Size = new Size(4, 42),
+            Size = new Size(4, 40),
             Location = new Point(0, btnDashboard.Top)
         };
         pnlSidebar.Controls.Add(_navIndicator);
@@ -243,11 +287,10 @@ public partial class MainForm : Form
                 return;
             }
 
-            // Movimiento con desaceleración suave hacia el objetivo.
             _navIndicator.Top = current + delta / 3;
         };
 
-        foreach (var button in new[] { btnDashboard, btnParking, btnRates, btnUsers, btnClosures, btnLogout })
+        foreach (var button in new[] { btnDashboard, btnParking, btnRates, _btnIncome, btnUsers, btnClosures, btnLogout })
         {
             button.BackColor = _sidebar;
             button.UseVisualStyleBackColor = false;
@@ -260,7 +303,7 @@ public partial class MainForm : Form
 
     private void btnDashboard_Click(object sender, EventArgs e) => ShowDashboard();
 
-    private void btnParking_Click(object sender, EventArgs e) => ShowParking();
+    private void btnParking_Click(object sender, EventArgs e) => RunPermissionAction(PermissionKeys.Parking, ShowParking);
 
     private void btnRates_Click(object sender, EventArgs e) => RunPermissionAction(PermissionKeys.Rates, ShowRates);
 
@@ -281,52 +324,107 @@ public partial class MainForm : Form
 
     private void btnLogout_Click(object sender, EventArgs e) => Close();
 
-    private void ShowDashboard()
+    /// <summary>
+    /// Muestra un módulo reutilizando su panel si ya fue creado (conserva lo escrito). El builder
+    /// devuelve el panel y una acción de refresco que se ejecuta cada vez que el módulo se muestra.
+    /// </summary>
+    private void ShowModule(Button button, string title, string key, Func<(Control panel, Action refresh)> builder)
     {
-        SetActive(btnDashboard, "Panel");
-        ClearContent();
+        SetActive(button, title);
 
-        var stats = _controller.GetStats(_currentUser.UserId);
-        var grid = CreateGrid();
-        var active = _controller.GetSessions(activeOnly: true)
-            .Select(s => new
-            {
-                Placa = s.Plate,
-                Entrada = s.EntryAt.ToString("dd/MM/yyyy HH:mm"),
-                Tarifa = s.RateName,
-                Tiempo = FormatDuration(s.CurrentDuration)
-            })
-            .ToList();
+        if (!_modulePanels.TryGetValue(key, out var panel))
+        {
+            pnlContent.SuspendLayout();
+            var (created, refresh) = builder();
+            created.Dock = DockStyle.Fill;
+            _modulePanels[key] = created;
+            _moduleRefreshers[key] = refresh;
+            pnlContent.Controls.Add(created);
+            pnlContent.ResumeLayout();
+            panel = created;
+        }
+
+        foreach (var pair in _modulePanels)
+        {
+            pair.Value.Visible = pair.Key == key;
+        }
+
+        panel.BringToFront();
+        if (_moduleRefreshers.TryGetValue(key, out var refresher))
+        {
+            refresher();
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Panel
+    // ---------------------------------------------------------------------------------------------
+
+    private void ShowDashboard() => ShowModule(btnDashboard, "Panel", "Dashboard", BuildDashboard);
+
+    private (Control, Action) BuildDashboard()
+    {
+        var container = new Panel { BackColor = pnlContent.BackColor, AutoScroll = true };
 
         var cards = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 128,
+            Height = 120,
             ColumnCount = 4,
-            RowCount = 1,
-            Margin = new Padding(0, 0, 0, 22)
+            RowCount = 1
         };
-        cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        cards.Controls.Add(CreateStatCard("Vehículos activos", stats.ActiveVehicles.ToString(), Color.FromArgb(22, 163, 74)), 0, 0);
-        cards.Controls.Add(CreateStatCard("Salidas hoy", stats.ExitsToday.ToString(), _accent), 1, 0);
-        cards.Controls.Add(CreateStatCard("Caja del día", MoneyHelper.Format(stats.RevenueToday), Color.FromArgb(202, 138, 4)), 2, 0);
-        cards.Controls.Add(CreateStatCard("Cobrado por mí", MoneyHelper.Format(stats.RevenueCurrentUserToday), Color.FromArgb(124, 58, 237)), 3, 0);
+        for (var i = 0; i < 4; i++)
+        {
+            cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        }
 
-        grid.DataSource = active;
+        var cardActive = CreateStatCard("Vehículos activos", "0", Color.FromArgb(22, 163, 74));
+        var cardExits = CreateStatCard("Salidas hoy", "0", _accent);
+        var cardCash = CreateStatCard("Efectivo hoy", "₡0", Color.FromArgb(202, 138, 4));
+        var cardSinpe = CreateStatCard("SINPE hoy", "₡0", Color.FromArgb(124, 58, 237));
+        cards.Controls.Add(cardActive, 0, 0);
+        cards.Controls.Add(cardExits, 1, 0);
+        cards.Controls.Add(cardCash, 2, 0);
+        cards.Controls.Add(cardSinpe, 3, 0);
 
-        pnlContent.Controls.Add(grid);
-        pnlContent.Controls.Add(CreateSectionTitle("Vehículos dentro del parqueo"));
-        pnlContent.Controls.Add(cards);
+        var grid = CreateGrid();
+        var title = CreateSectionTitle("Vehículos dentro del parqueo");
+
+        container.Controls.Add(grid);
+        container.Controls.Add(title);
+        container.Controls.Add(cards);
+
+        void Refresh()
+        {
+            var stats = _controller.GetStats(_currentUser.UserId);
+            var today = _controller.GetSummaryForDate(DateTime.Today);
+            SetCardValue(cardActive, stats.ActiveVehicles.ToString());
+            SetCardValue(cardExits, stats.ExitsToday.ToString());
+            SetCardValue(cardCash, MoneyHelper.Format(today.Cash));
+            SetCardValue(cardSinpe, MoneyHelper.Format(today.Sinpe));
+
+            grid.DataSource = _controller.GetSessions(activeOnly: true)
+                .Select(s => new
+                {
+                    Placa = s.Plate,
+                    Entrada = s.EntryAt.ToString("dd/MM/yyyy HH:mm"),
+                    Tarifa = s.HasCustomRate ? "Personalizada" : s.RateName,
+                    Tiempo = FormatDuration(s.CurrentDuration)
+                })
+                .ToList();
+        }
+
+        return (container, Refresh);
     }
 
-    private void ShowParking()
-    {
-        SetActive(btnParking, "Entrada / salida");
-        ClearContent();
+    // ---------------------------------------------------------------------------------------------
+    // Entrada / salida
+    // ---------------------------------------------------------------------------------------------
 
+    private void ShowParking() => ShowModule(btnParking, "Entrada / salida", "Parking", BuildParking);
+
+    private (Control, Action) BuildParking()
+    {
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -334,14 +432,16 @@ public partial class MainForm : Form
             RowCount = 1,
             BackColor = pnlContent.BackColor
         };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38));
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 62));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 64));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var left = CreatePanel();
         left.Dock = DockStyle.Fill;
+        left.AutoScroll = true;
         var right = CreatePanel();
         right.Dock = DockStyle.Fill;
+        right.AutoScroll = true;
 
         var txtPlate = CreateTextBox();
         txtPlate.CharacterCasing = CharacterCasing.Upper;
@@ -349,7 +449,7 @@ public partial class MainForm : Form
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
             Font = new Font("Segoe UI", 11F),
-            Width = 320,
+            Width = 300,
             DisplayMember = nameof(ParkingRate.Name),
             ValueMember = nameof(ParkingRate.RateId)
         };
@@ -373,12 +473,13 @@ public partial class MainForm : Form
         var lblDetails = CreateInfoLabel("Seleccione un vehículo o escanee un QR.");
         var btnExit = CreatePrimaryButton("Registrar salida");
         btnExit.BackColor = Color.FromArgb(22, 163, 74);
-        var btnReprint = CreateSecondaryButton("Reimprimir tiquete");
+        var btnCustom = CreateSecondaryButton("Tarifa personalizada");
+        var btnReprint = CreateSecondaryButton("Reimprimir");
 
         var grid = CreateGrid(DockStyle.None);
         grid.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
-        List<ParkingSession> currentSessions = new();
+        List<ParkingSession> currentSessions = [];
         ParkingSession? selected = null;
 
         void LoadGrid(string? plate = null)
@@ -392,9 +493,10 @@ public partial class MainForm : Form
                 Placa = s.Plate,
                 Entrada = s.EntryAt.ToString("dd/MM/yyyy HH:mm"),
                 Salida = s.ExitAt?.ToString("dd/MM/yyyy HH:mm") ?? string.Empty,
-                Tarifa = s.RateName,
+                Tarifa = s.HasCustomRate ? "Personalizada" : s.RateName,
                 Tiempo = FormatDuration(s.CurrentDuration),
-                Monto = s.ChargedAmount?.ToString("C0") ?? string.Empty
+                Monto = s.ChargedAmount?.ToString("C0") ?? string.Empty,
+                Pago = s.PaymentMethod ?? string.Empty
             }).ToList();
             HideGridColumn(grid, "SessionId");
         }
@@ -409,11 +511,12 @@ public partial class MainForm : Form
             }
 
             var amount = session.Status == "A"
-                ? ParkingService.CalculateAmount(session.EntryAt, DateTime.Now, session.RateType, session.RateAmount, session.GraceMinutes)
+                ? ParkingService.CalculateAmount(session, DateTime.Now)
                 : session.ChargedAmount ?? 0;
-            var statusText = session.Status == "A" ? "Activo" : $"Salio: {session.ExitAt:dd/MM/yyyy HH:mm}";
+            var statusText = session.Status == "A" ? "Activo" : $"Salió: {session.ExitAt:dd/MM/yyyy HH:mm}";
+            var rate = session.HasCustomRate ? $"Personalizada ({session.CustomNote ?? "especial"})" : session.RateName;
             lblDetails.Text =
-                $"Placa: {session.Plate}\nEntrada: {session.EntryAt:dd/MM/yyyy HH:mm}\nEstado: {statusText}\nTarifa: {session.RateName}\nTiempo: {FormatDuration(session.CurrentDuration)}\nMonto: {MoneyHelper.Format(amount)}";
+                $"Placa: {session.Plate}\nEntrada: {session.EntryAt:dd/MM/yyyy HH:mm}\nEstado: {statusText}\nTarifa: {rate}\nTiempo: {FormatDuration(session.CurrentDuration)}\nMonto estimado: {MoneyHelper.Format(amount)}";
         }
 
         btnEntry.Click += (_, _) => ExecuteThrottled(btnEntry, () =>
@@ -497,6 +600,25 @@ public partial class MainForm : Form
             preview.ShowDialog(this);
         });
 
+        btnCustom.Click += (_, _) => ExecuteThrottled(btnCustom, () =>
+        {
+            if (selected is null || selected.Status != "A")
+            {
+                throw new InvalidOperationException("Seleccione un vehículo activo para asignarle una tarifa personalizada.");
+            }
+
+            using var form = new CustomRateForm(selected);
+            if (form.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            _controller.SetCustomRate(selected.SessionId, form.RateType, form.Amount, form.GraceMinutes, form.BlockMinutes, form.BlockAmount, form.Note, _currentUser.UserId);
+            LoadGrid();
+            RenderSelected(_controller.GetSession(selected.SessionId));
+            MessageBox.Show("Tarifa personalizada aplicada a esta estadía.", "Tarifa personalizada", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        });
+
         btnExit.Click += (_, _) => ExecuteThrottled(btnExit, () =>
         {
             if (selected is null)
@@ -504,22 +626,30 @@ public partial class MainForm : Form
                 throw new InvalidOperationException("Seleccione un vehículo para registrar la salida.");
             }
 
-            var preview = selected.Status == "A"
-                ? ParkingService.CalculateAmount(selected.EntryAt, DateTime.Now, selected.RateType, selected.RateAmount, selected.GraceMinutes)
-                : selected.ChargedAmount ?? 0;
-            var confirm = MessageBox.Show(
-                $"¿Registrar la salida y cobrar?\n\nPlaca: {selected.Plate}\nMonto a cobrar: {MoneyHelper.Format(preview)}",
-                "Confirmar salida",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-            if (confirm != DialogResult.Yes)
+            if (selected.Status != "A")
+            {
+                throw new InvalidOperationException("Este vehículo ya tiene salida registrada.");
+            }
+
+            using var dialog = new ExitPaymentForm(selected);
+            if (dialog.ShowDialog(this) != DialogResult.OK)
             {
                 return;
             }
 
-            var closed = _controller.RegisterExit(selected.SessionId, _currentUser.UserId);
+            var closed = _controller.RegisterExit(
+                selected.SessionId,
+                _currentUser.UserId,
+                dialog.ExtraAmount,
+                dialog.PaymentMethod,
+                dialog.Reference,
+                dialog.TenderedAmount);
+
+            var changeText = dialog.PaymentMethod == PaymentMethods.Cash && dialog.TenderedAmount is { } tendered
+                ? $"\nPaga con: {MoneyHelper.Format(tendered)}\nVuelto: {MoneyHelper.Format(tendered - (closed.ChargedAmount ?? 0))}"
+                : string.Empty;
             MessageBox.Show(
-                $"Salida registrada.\n\nPlaca: {closed.Plate}\nMonto a cobrar: {MoneyHelper.Format(closed.ChargedAmount ?? 0)}",
+                $"Salida registrada.\n\nPlaca: {closed.Plate}\nForma de pago: {dialog.PaymentMethod}\nTotal cobrado: {MoneyHelper.Format(closed.ChargedAmount ?? 0)}{changeText}",
                 "Cobro",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
@@ -527,62 +657,90 @@ public partial class MainForm : Form
             RenderSelected(null);
         });
 
-        AddLabeledControl(left, "Placa del vehículo", txtPlate, 24);
-        AddLabeledControl(left, "Tipo de tarifa", cmbRates, 96);
-        btnEntry.Location = new Point(24, 170);
+        AddLabeledControl(left, "Placa del vehículo", txtPlate, 22);
+        AddLabeledControl(left, "Tipo de tarifa", cmbRates, 88);
+        btnEntry.Location = new Point(24, 156);
         left.Controls.Add(btnEntry);
 
-        AddLabeledControl(left, "Código QR / ticket", txtQr, 242);
-        btnFindQr.Location = new Point(24, 316);
+        AddLabeledControl(left, "Código QR / ticket", txtQr, 224);
+        btnFindQr.Location = new Point(24, 294);
         left.Controls.Add(btnFindQr);
 
-        AddLabeledControl(left, "Buscar por placa", txtSearchPlate, 386);
-        btnFindPlate.Location = new Point(24, 460);
+        AddLabeledControl(left, "Buscar por placa", txtSearchPlate, 360);
+        btnFindPlate.Location = new Point(24, 430);
         left.Controls.Add(btnFindPlate);
-        chkHideExited.Location = new Point(24, 516);
+        chkHideExited.Location = new Point(24, 488);
         left.Controls.Add(chkHideExited);
 
-        lblDetails.Location = new Point(24, 24);
-        lblDetails.Size = new Size(620, 126);
+        lblDetails.Location = new Point(24, 22);
+        lblDetails.Size = new Size(640, 132);
         lblDetails.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         right.Controls.Add(lblDetails);
-        btnExit.Location = new Point(24, 166);
+        btnExit.Location = new Point(24, 162);
+        btnExit.Size = new Size(190, 44);
         right.Controls.Add(btnExit);
-        btnReprint.Location = new Point(214, 166);
+        btnCustom.Location = new Point(224, 162);
+        btnCustom.Size = new Size(190, 44);
+        right.Controls.Add(btnCustom);
+        btnReprint.Location = new Point(424, 162);
+        btnReprint.Size = new Size(150, 44);
         right.Controls.Add(btnReprint);
-        grid.Location = new Point(24, 226);
-        grid.Size = new Size(620, 360);
+        grid.Location = new Point(24, 222);
+        grid.Size = new Size(640, 414);
         right.Controls.Add(grid);
 
         root.Controls.Add(left, 0, 0);
         root.Controls.Add(right, 1, 0);
-        pnlContent.Controls.Add(root);
-        LoadGrid();
+
+        void Refresh() => LoadGrid(string.IsNullOrWhiteSpace(txtSearchPlate.Text) ? null : txtSearchPlate.Text);
+
+        return (root, Refresh);
     }
 
-    private void ShowRates()
-    {
-        SetActive(btnRates, "Tarifas");
-        ClearContent();
+    // ---------------------------------------------------------------------------------------------
+    // Tarifas
+    // ---------------------------------------------------------------------------------------------
 
+    private void ShowRates() => ShowModule(btnRates, "Tarifas", "Rates", BuildRates);
+
+    private (Control, Action) BuildRates()
+    {
         var panel = CreatePanel();
         panel.Dock = DockStyle.Fill;
+        panel.AutoScroll = true;
 
         var grid = CreateGrid(DockStyle.None);
         grid.Location = new Point(24, 24);
-        grid.Size = new Size(650, 590);
+        grid.Size = new Size(650, 600);
         grid.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
 
         var txtName = CreateTextBox();
         var cmbType = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 11F), Width = 260 };
-        cmbType.Items.AddRange(new object[] { "Hora", "Dia", "Semana", "Mes", "Fija" });
+        cmbType.Items.AddRange(["Hora", "Dia", "Semana", "Mes", "Fija"]);
         var txtAmount = CreateMoneyTextBox();
         txtAmount.Width = 260;
         var numGrace = new NumericUpDown { Font = new Font("Segoe UI", 11F), Maximum = 1440, Width = 260 };
+        var chkBlock = new CheckBox
+        {
+            Text = "Tope por bloque de 12h (tarifa por hora que pasa a diaria)",
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(71, 85, 105),
+            AutoSize = true
+        };
+        var txtBlock = CreateMoneyTextBox();
+        txtBlock.Width = 260;
+        txtBlock.Text = "3000";
         var chkActive = new CheckBox { Text = "Activa", Checked = true, Font = new Font("Segoe UI", 10F), Width = 260 };
         var btnSave = CreatePrimaryButton("Guardar tarifa");
         var btnNew = CreateSecondaryButton("Nueva");
         int editingId = 0;
+
+        void ApplyBlockVisibility()
+        {
+            var isHour = (cmbType.SelectedItem?.ToString() ?? "Hora") == "Hora";
+            chkBlock.Visible = isHour;
+            txtBlock.Visible = isHour && chkBlock.Checked;
+        }
 
         void LoadRates()
         {
@@ -592,6 +750,7 @@ public partial class MainForm : Form
                 Nombre = r.Name,
                 Tipo = r.RateType,
                 Monto = r.Amount,
+                Tope12h = r.BlockAmount?.ToString("C0") ?? string.Empty,
                 Gracia = r.GraceMinutes,
                 Activa = r.IsActive
             }).ToList();
@@ -605,8 +764,14 @@ public partial class MainForm : Form
             cmbType.SelectedIndex = 0;
             txtAmount.Text = "0";
             numGrace.Value = 0;
+            chkBlock.Checked = false;
+            txtBlock.Text = "3000";
             chkActive.Checked = true;
+            ApplyBlockVisibility();
         }
+
+        cmbType.SelectedIndexChanged += (_, _) => ApplyBlockVisibility();
+        chkBlock.CheckedChanged += (_, _) => ApplyBlockVisibility();
 
         grid.CellClick += (_, e) =>
         {
@@ -621,8 +786,11 @@ public partial class MainForm : Form
             txtName.Text = rate.Name;
             cmbType.SelectedItem = rate.RateType;
             txtAmount.Text = rate.Amount.ToString("0.##");
-            numGrace.Value = rate.GraceMinutes;
+            numGrace.Value = Math.Min(numGrace.Maximum, rate.GraceMinutes);
+            chkBlock.Checked = rate.BlockAmount.HasValue;
+            txtBlock.Text = (rate.BlockAmount ?? 3000m).ToString("0.##");
             chkActive.Checked = rate.IsActive;
+            ApplyBlockVisibility();
         };
 
         btnSave.Click += (_, _) => ExecuteThrottled(btnSave, () =>
@@ -632,13 +800,24 @@ public partial class MainForm : Form
                 throw new InvalidOperationException("Digite el nombre de la tarifa.");
             }
 
+            var type = cmbType.SelectedItem?.ToString() ?? "Hora";
+            int? blockMinutes = null;
+            decimal? blockAmount = null;
+            if (type == "Hora" && chkBlock.Checked)
+            {
+                blockMinutes = 720;
+                blockAmount = ParseMoney(txtBlock.Text);
+            }
+
             _controller.SaveRate(new ParkingRate
             {
                 RateId = editingId,
                 Name = txtName.Text,
-                RateType = cmbType.SelectedItem?.ToString() ?? "Hora",
+                RateType = type,
                 Amount = ParseMoney(txtAmount.Text),
                 GraceMinutes = Convert.ToInt32(numGrace.Value),
+                BlockMinutes = blockMinutes,
+                BlockAmount = blockAmount,
                 IsActive = chkActive.Checked,
                 SortOrder = editingId
             }, _currentUser.UserId);
@@ -648,47 +827,54 @@ public partial class MainForm : Form
         btnNew.Click += (_, _) => ExecuteThrottled(btnNew, ClearForm);
 
         panel.Controls.Add(grid);
-        AddLabeledControl(panel, "Nombre", txtName, 44, 720);
-        AddLabeledControl(panel, "Tipo", cmbType, 118, 720);
-        AddLabeledControl(panel, "Monto", txtAmount, 192, 720);
-        AddLabeledControl(panel, "Minutos de gracia", numGrace, 266, 720);
-        chkActive.Location = new Point(720, 340);
+        AddLabeledControl(panel, "Nombre", txtName, 30, 720);
+        AddLabeledControl(panel, "Tipo", cmbType, 100, 720);
+        AddLabeledControl(panel, "Monto por unidad", txtAmount, 170, 720);
+        AddLabeledControl(panel, "Minutos de gracia", numGrace, 240, 720);
+        chkBlock.Location = new Point(720, 306);
+        panel.Controls.Add(chkBlock);
+        AddLabeledControl(panel, "Tope por 12h (máximo a cobrar)", txtBlock, 330, 720);
+        chkActive.Location = new Point(720, 406);
         panel.Controls.Add(chkActive);
-        btnSave.Location = new Point(720, 398);
-        btnNew.Location = new Point(910, 398);
+        btnSave.Location = new Point(720, 446);
+        btnNew.Location = new Point(910, 446);
         panel.Controls.Add(btnSave);
         panel.Controls.Add(btnNew);
 
-        pnlContent.Controls.Add(panel);
         ClearForm();
-        LoadRates();
+
+        return (panel, LoadRates);
     }
 
-    private void ShowUsers()
-    {
-        SetActive(btnUsers, "Usuarios");
-        ClearContent();
+    // ---------------------------------------------------------------------------------------------
+    // Usuarios
+    // ---------------------------------------------------------------------------------------------
 
+    private void ShowUsers() => ShowModule(btnUsers, "Usuarios", "Users", BuildUsers);
+
+    private (Control, Action) BuildUsers()
+    {
         var panel = CreatePanel();
         panel.Dock = DockStyle.Fill;
+        panel.AutoScroll = true;
 
         var grid = CreateGrid(DockStyle.None);
         grid.Location = new Point(24, 24);
-        grid.Size = new Size(650, 590);
+        grid.Size = new Size(650, 600);
         grid.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
         var txtCedula = CreateTextBox();
         var txtFullName = CreateTextBox();
         var txtPassword = CreateTextBox();
         txtPassword.PasswordChar = '*';
         var cmbRole = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 11F), Width = 260 };
-        cmbRole.Items.AddRange(new object[] { "Empleado", "Administrador" });
+        cmbRole.Items.AddRange(["Empleado", "Administrador"]);
         var chkActive = new CheckBox { Text = "Activo", Checked = true, Font = new Font("Segoe UI", 10F), Width = 260 };
         var clbPermissions = new CheckedListBox
         {
             CheckOnClick = true,
             Font = new Font("Segoe UI", 10F),
             Width = 320,
-            Height = 132,
+            Height = 150,
             BorderStyle = BorderStyle.FixedSingle
         };
         foreach (var permission in PermissionKeys.All)
@@ -779,21 +965,21 @@ public partial class MainForm : Form
         };
 
         panel.Controls.Add(grid);
-        AddLabeledControl(panel, "Cedula", txtCedula, 44, 720);
-        AddLabeledControl(panel, "Nombre completo", txtFullName, 118, 720);
-        AddLabeledControl(panel, "Contrasena", txtPassword, 192, 720);
-        AddLabeledControl(panel, "Puesto", cmbRole, 266, 720);
-        AddLabeledControl(panel, "Permisos", clbPermissions, 340, 720);
-        chkActive.Location = new Point(720, 506);
+        AddLabeledControl(panel, "Cedula", txtCedula, 24, 720);
+        AddLabeledControl(panel, "Nombre completo", txtFullName, 92, 720);
+        AddLabeledControl(panel, "Contrasena", txtPassword, 160, 720);
+        AddLabeledControl(panel, "Puesto", cmbRole, 228, 720);
+        AddLabeledControl(panel, "Permisos", clbPermissions, 296, 720);
+        chkActive.Location = new Point(720, 480);
         panel.Controls.Add(chkActive);
-        btnSave.Location = new Point(720, 552);
-        btnNew.Location = new Point(910, 552);
+        btnSave.Location = new Point(720, 520);
+        btnNew.Location = new Point(910, 520);
         panel.Controls.Add(btnSave);
         panel.Controls.Add(btnNew);
 
-        pnlContent.Controls.Add(panel);
         ClearForm();
-        LoadUsers();
+
+        return (panel, LoadUsers);
 
         void SetCheckedPermissions(IEnumerable<string> permissions)
         {
@@ -805,20 +991,142 @@ public partial class MainForm : Form
             }
         }
 
-        List<string> GetCheckedPermissions()
-        {
-            return clbPermissions.CheckedItems
-                .Cast<PermissionListItem>()
-                .Select(item => item.Key)
-                .ToList();
-        }
+        List<string> GetCheckedPermissions() =>
+            clbPermissions.CheckedItems.Cast<PermissionListItem>().Select(item => item.Key).ToList();
     }
 
-    private void ShowClosures()
-    {
-        SetActive(btnClosures, "Cierres");
-        ClearContent();
+    // ---------------------------------------------------------------------------------------------
+    // Ingresos
+    // ---------------------------------------------------------------------------------------------
 
+    private void ShowIncome() => ShowModule(_btnIncome!, "Ingresos", "Income", BuildIncome);
+
+    private (Control, Action) BuildIncome()
+    {
+        var panel = CreatePanel();
+        panel.Dock = DockStyle.Fill;
+        panel.Padding = new Padding(0);
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 116));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var filters = new Panel { Dock = DockStyle.Fill, Padding = new Padding(24, 16, 24, 0) };
+        var fromDate = new DateTimePicker { Font = new Font("Segoe UI", 10F), Format = DateTimePickerFormat.Short, Width = 140, Value = DateTime.Today };
+        var toDate = new DateTimePicker { Font = new Font("Segoe UI", 10F), Format = DateTimePickerFormat.Short, Width = 140, Value = DateTime.Today };
+        var cmbMethod = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 10F), Width = 140 };
+        cmbMethod.Items.AddRange(["Todos", PaymentMethods.Cash, PaymentMethods.Sinpe]);
+        cmbMethod.SelectedIndex = 0;
+        var cmbUser = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Font = new Font("Segoe UI", 10F),
+            Width = 180,
+            DisplayMember = nameof(User.FullName),
+            ValueMember = nameof(User.UserId)
+        };
+        var userOptions = new List<User> { new() { UserId = 0, FullName = "Todos" } };
+        userOptions.AddRange(_controller.GetUsers());
+        cmbUser.DataSource = userOptions;
+        var btnSearch = CreateSecondaryButton("Buscar");
+        var btnPdf = CreatePrimaryButton("Descargar PDF del rango");
+        btnPdf.Width = 240;
+
+        AddLabeledControl(filters, "Desde", fromDate, 4, 0);
+        AddLabeledControl(filters, "Hasta", toDate, 4, 160);
+        AddLabeledControl(filters, "Forma de pago", cmbMethod, 4, 320);
+        AddLabeledControl(filters, "Empleado", cmbUser, 4, 480);
+        btnSearch.Location = new Point(680, 30);
+        btnSearch.Size = new Size(120, 40);
+        filters.Controls.Add(btnSearch);
+        btnPdf.Location = new Point(812, 30);
+        btnPdf.Size = new Size(240, 40);
+        filters.Controls.Add(btnPdf);
+
+        var totals = new Panel { Dock = DockStyle.Fill, Padding = new Padding(24, 0, 24, 8) };
+        var lblTotals = new Label
+        {
+            Dock = DockStyle.Fill,
+            Font = new Font("Segoe UI", 13F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(15, 23, 42),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Text = "Efectivo: ₡0     SINPE: ₡0     Total: ₡0     Cobros: 0"
+        };
+        totals.Controls.Add(lblTotals);
+
+        var gridHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(24, 0, 24, 24) };
+        var grid = CreateGrid(DockStyle.Fill);
+        gridHost.Controls.Add(grid);
+
+        List<IncomeRecord> current = [];
+
+        (DateTime from, DateTime to, string? method, int? userId) ReadFilters()
+        {
+            var from = fromDate.Value.Date;
+            var to = toDate.Value.Date.AddDays(1).AddSeconds(-1);
+            var method = cmbMethod.SelectedIndex <= 0 ? null : cmbMethod.SelectedItem?.ToString();
+            var userId = cmbUser.SelectedValue is int id && id > 0 ? id : (int?)null;
+            return (from, to, method, userId);
+        }
+
+        void Load()
+        {
+            var (from, to, method, userId) = ReadFilters();
+            current = _controller.GetIncome(from, to, method, userId);
+            grid.DataSource = current.Select(r => new
+            {
+                Fecha = r.PaidAt.ToString("dd/MM/yyyy HH:mm"),
+                Placa = r.Plate,
+                Tarifa = r.IsCustom ? "Personalizada" : r.RateName,
+                Pago = r.PaymentMethod,
+                Monto = r.Amount,
+                Referencia = r.Reference ?? string.Empty,
+                Empleado = r.Username
+            }).ToList();
+
+            var summary = _controller.GetIncomeSummary(from, to, userId);
+            lblTotals.Text = $"Efectivo: {MoneyHelper.Format(summary.Cash)}     SINPE: {MoneyHelper.Format(summary.Sinpe)}     Total: {MoneyHelper.Format(summary.Total)}     Cobros: {summary.Count}";
+        }
+
+        btnSearch.Click += (_, _) => ExecuteThrottled(btnSearch, Load);
+        btnPdf.Click += (_, _) => ExecuteThrottled(btnPdf, () =>
+        {
+            var (from, to, _, userId) = ReadFilters();
+            if (current.Count == 0)
+            {
+                throw new InvalidOperationException("No hay ingresos para exportar en el rango seleccionado.");
+            }
+
+            using var dialog = new SaveFileDialog
+            {
+                Filter = "PDF (*.pdf)|*.pdf",
+                FileName = $"Ingresos_{from:yyyyMMdd}_{to:yyyyMMdd}.pdf"
+            };
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+            {
+                var summary = _controller.GetIncomeSummary(from, to, userId);
+                _pdfExportService.ExportIncomeRange(current, summary, from, to, dialog.FileName);
+                MessageBox.Show("PDF de ingresos generado correctamente.", "Ingresos", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        });
+
+        layout.Controls.Add(filters, 0, 0);
+        layout.Controls.Add(totals, 0, 1);
+        layout.Controls.Add(gridHost, 0, 2);
+        panel.Controls.Add(layout);
+
+        return (panel, Load);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Cierres
+    // ---------------------------------------------------------------------------------------------
+
+    private void ShowClosures() => ShowModule(btnClosures, "Cierres", "Closures", BuildClosures);
+
+    private (Control, Action) BuildClosures()
+    {
         var tabs = new TabControl
         {
             Dock = DockStyle.Fill,
@@ -838,7 +1146,27 @@ public partial class MainForm : Form
         var cashPanel = CreatePanel();
         employeePanel.Dock = DockStyle.Fill;
         cashPanel.Dock = DockStyle.Fill;
+        employeePanel.AutoScroll = true;
+        cashPanel.AutoScroll = true;
 
+        Action refreshEmployee = BuildEmployeeClosure(employeePanel);
+        Action refreshCash = BuildCashClosure(cashPanel);
+
+        root.Controls.Add(employeePanel, 0, 0);
+        root.Controls.Add(cashPanel, 1, 0);
+        tabRegister.Controls.Add(root);
+        BuildClosureHistoryTab(tabHistory);
+        tabHistory.Enabled = _currentUser.HasPermission(PermissionKeys.ClosureHistory);
+
+        return (tabs, () =>
+        {
+            refreshEmployee();
+            refreshCash();
+        });
+    }
+
+    private Action BuildEmployeeClosure(Panel employeePanel)
+    {
         var cmbUsers = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
@@ -850,72 +1178,27 @@ public partial class MainForm : Form
         };
         var fromPicker = new DateTimePicker { Font = new Font("Segoe UI", 10F), Width = 300, Format = DateTimePickerFormat.Custom, CustomFormat = "dd/MM/yyyy HH:mm", Value = DateTime.Today };
         var toPicker = new DateTimePicker { Font = new Font("Segoe UI", 10F), Width = 300, Format = DateTimePickerFormat.Custom, CustomFormat = "dd/MM/yyyy HH:mm", Value = DateTime.Now };
-        var txtDelivered = CreateMoneyTextBox();
-        var lblExpected = CreateInfoLabel("Esperado: ₡0");
+
+        var lblExpectedCash = CreateInfoLabel("Efectivo esperado: ₡0");
+        var lblExpectedSinpe = CreateInfoLabel("SINPE cobrado: ₡0");
+        var lblCounted = CreateInfoLabel("Entregado (contado): ₡0");
+        var lblDiff = CreateInfoLabel("Diferencia: ₡0");
+        foreach (var lbl in new[] { lblExpectedCash, lblExpectedSinpe, lblCounted, lblDiff })
+        {
+            lbl.Size = new Size(440, 22);
+        }
+
+        var (denomPanel, denomInputs) = CreateDenominationPanel();
         var btnExpected = CreateSecondaryButton("Calcular esperado");
         var btnEmployeeClose = CreatePrimaryButton("Cerrar empleado");
 
-        var lblCashDate = CreateInfoLabel(DateTime.Now.ToString("dd/MM/yyyy HH:mm"));
-        lblCashDate.Size = new Size(300, 28);
-        var denominationValues = new[] { 20000m, 10000m, 5000m, 2000m, 1000m, 500m, 100m, 50m, 25m, 10m, 5m };
-        var denominationInputs = new Dictionary<decimal, NumericUpDown>();
-        var denominationPanel = new FlowLayoutPanel
-        {
-            Location = new Point(24, 250),
-            Size = new Size(460, 272),
-            AutoScroll = false,
-            WrapContents = true
-        };
-        var baseAmount = AppSettings.MinimumCashAmount;
-        decimal systemAmount = 0m;
-        try { systemAmount = _controller.GetSystemCashForDate(DateTime.Today); } catch { /* se recalcula con el botón */ }
-
-        var lblBase = CreateInfoLabel($"Fondo de caja (base): {MoneyHelper.Format(baseAmount)}");
-        lblBase.ForeColor = Color.FromArgb(100, 116, 139);
-        var lblSysAmt = CreateInfoLabel("Cobrado hoy (sistema): ₡0");
-        var lblExpectedCash = CreateInfoLabel("Esperado en caja: ₡0");
-        var lblCounted = CreateInfoLabel("Contado (físico): ₡0");
-        var lblDiff = CreateInfoLabel("Diferencia: ₡0");
-        foreach (var lbl in new[] { lblBase, lblSysAmt, lblExpectedCash, lblCounted, lblDiff })
-        {
-            lbl.Size = new Size(450, 24);
-        }
-        var btnSystem = CreateSecondaryButton("Recalcular");
-        var btnCashClose = CreatePrimaryButton("Cerrar caja");
-
-        foreach (var denomination in denominationValues)
-        {
-            var row = new Panel { Width = 205, Height = 34, Margin = new Padding(0, 0, 8, 8) };
-            var label = new Label
-            {
-                Text = MoneyHelper.Format(denomination),
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(71, 85, 105),
-                Location = new Point(0, 7),
-                Width = 76
-            };
-            var input = new NumericUpDown
-            {
-                Font = new Font("Segoe UI", 9F),
-                Width = 104,
-                Maximum = 10000,
-                Location = new Point(84, 3)
-            };
-            input.ValueChanged += (_, _) => UpdateSummary();
-            denominationInputs.Add(denomination, input);
-            row.Controls.Add(label);
-            row.Controls.Add(input);
-            denominationPanel.Controls.Add(row);
-        }
+        decimal cashExpected = 0m;
 
         void UpdateSummary()
         {
-            var counted = denominationInputs.Sum(item => item.Key * item.Value.Value);
-            var expected = systemAmount + baseAmount;
-            var difference = counted - expected;
-            lblSysAmt.Text = $"Cobrado hoy (sistema): {MoneyHelper.Format(systemAmount)}";
-            lblExpectedCash.Text = $"Esperado en caja: {MoneyHelper.Format(expected)}";
-            lblCounted.Text = $"Contado (físico): {MoneyHelper.Format(counted)}";
+            var counted = denomInputs.Sum(item => item.Key * item.Value.Value);
+            lblCounted.Text = $"Entregado (contado): {MoneyHelper.Format(counted)}";
+            var difference = counted - cashExpected;
             var estado = difference == 0 ? "✔ Cuadra" : difference > 0 ? "▲ Sobra" : "▼ Falta";
             lblDiff.Text = $"Diferencia: {MoneyHelper.Format(difference)}    {estado}";
             lblDiff.ForeColor = difference == 0
@@ -923,14 +1206,26 @@ public partial class MainForm : Form
                 : difference > 0 ? Color.FromArgb(202, 138, 4) : Color.FromArgb(220, 38, 38);
         }
 
-        btnExpected.Click += (_, _) => ExecuteThrottled(btnExpected, () =>
+        void CalculateExpected()
         {
-            if (cmbUsers.SelectedValue is int userId)
+            if (cmbUsers.SelectedValue is not int userId)
             {
-                var expected = _controller.GetExpectedForUser(userId, fromPicker.Value, toPicker.Value);
-                lblExpected.Text = $"Esperado: {MoneyHelper.Format(expected)}";
+                return;
             }
-        });
+
+            var totals = _controller.GetUserTotals(userId, fromPicker.Value, toPicker.Value);
+            cashExpected = totals.Cash;
+            lblExpectedCash.Text = $"Efectivo esperado: {MoneyHelper.Format(totals.Cash)}";
+            lblExpectedSinpe.Text = $"SINPE cobrado: {MoneyHelper.Format(totals.Sinpe)}";
+            UpdateSummary();
+        }
+
+        foreach (var input in denomInputs.Values)
+        {
+            input.ValueChanged += (_, _) => UpdateSummary();
+        }
+
+        btnExpected.Click += (_, _) => ExecuteThrottled(btnExpected, CalculateExpected);
 
         btnEmployeeClose.Click += (_, _) => ExecuteThrottled(btnEmployeeClose, () =>
         {
@@ -939,105 +1234,226 @@ public partial class MainForm : Form
                 throw new InvalidOperationException("Seleccione un empleado.");
             }
 
-            var deliveredAmount = ParseMoney(txtDelivered.Text);
-            var closure = _controller.CreateEmployeeClosure(userId, fromPicker.Value, toPicker.Value, deliveredAmount, _currentUser.UserId);
+            var denominations = denomInputs.ToDictionary(item => item.Key, item => Convert.ToInt32(item.Value.Value));
+            var closure = _controller.CreateEmployeeClosure(userId, fromPicker.Value, toPicker.Value, denominations, _currentUser.UserId);
             MessageBox.Show(
-                $"Cierre creado.\nEsperado: {MoneyHelper.Format(closure.ExpectedAmount)}\nEntregado: {MoneyHelper.Format(closure.DeliveredAmount)}\nDiferencia: {MoneyHelper.Format(closure.DifferenceAmount)}",
+                $"Cierre de empleado #{closure.ClosureId} creado.\n\n"
+                + $"Efectivo esperado: {MoneyHelper.Format(closure.CashExpected)}\n"
+                + $"SINPE cobrado:     {MoneyHelper.Format(closure.SinpeExpected)}\n"
+                + $"Entregado:         {MoneyHelper.Format(closure.DeliveredAmount)}\n"
+                + $"Diferencia:        {MoneyHelper.Format(closure.DifferenceAmount)}",
                 "Cierre de empleado",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
+            foreach (var input in denomInputs.Values)
+            {
+                input.Value = 0;
+            }
         });
 
-        btnSystem.Click += (_, _) => ExecuteThrottled(btnSystem, () =>
-        {
-            systemAmount = _controller.GetSystemCashForDate(DateTime.Today);
-            UpdateSummary();
-        });
-
-        btnCashClose.Click += (_, _) => ExecuteThrottled(btnCashClose, () =>
-        {
-            var denominations = denominationInputs.ToDictionary(item => item.Key, item => Convert.ToInt32(item.Value.Value));
-            var counted = denominations.Sum(item => item.Key * item.Value);
-            var expected = systemAmount + baseAmount;
-            var difference = counted - expected;
-            var closureDate = DateTime.Now;
-            lblCashDate.Text = closureDate.ToString("dd/MM/yyyy HH:mm");
-            var closureId = _controller.CreateCashClosure(closureDate, denominations, _currentUser.UserId);
-            MessageBox.Show(
-                $"Cierre de caja #{closureId} creado.\n\n"
-                + $"Fondo base:  {MoneyHelper.Format(baseAmount)}\n"
-                + $"Sistema:     {MoneyHelper.Format(systemAmount)}\n"
-                + $"Esperado:    {MoneyHelper.Format(expected)}\n"
-                + $"Contado:     {MoneyHelper.Format(counted)}\n"
-                + $"Diferencia:  {MoneyHelper.Format(difference)}",
-                "Cierre de caja",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-        });
-
-        employeePanel.Controls.Add(CreateSectionTitle("Cierre de empleado", 24, 20));
-        AddLabeledControl(employeePanel, "Empleado", cmbUsers, 76);
-        AddLabeledControl(employeePanel, "Desde", fromPicker, 150);
-        AddLabeledControl(employeePanel, "Hasta", toPicker, 224);
-        lblExpected.Location = new Point(24, 296);
-        employeePanel.Controls.Add(lblExpected);
-        AddLabeledControl(employeePanel, "Monto entregado", txtDelivered, 360);
-        btnExpected.Location = new Point(24, 438);
-        btnEmployeeClose.Location = new Point(220, 438);
+        employeePanel.Controls.Add(CreateSectionTitle("Cierre de empleado", 24, 16));
+        AddLabeledControl(employeePanel, "Empleado", cmbUsers, 56);
+        AddLabeledControl(employeePanel, "Desde", fromPicker, 116);
+        AddLabeledControl(employeePanel, "Hasta", toPicker, 176);
+        lblExpectedCash.Location = new Point(24, 234);
+        lblExpectedSinpe.Location = new Point(24, 258);
+        employeePanel.Controls.Add(lblExpectedCash);
+        employeePanel.Controls.Add(lblExpectedSinpe);
+        employeePanel.Controls.Add(CreateSectionTitle("Billetes y monedas entregados", 24, 288));
+        denomPanel.Location = new Point(24, 318);
+        employeePanel.Controls.Add(denomPanel);
+        lblCounted.Location = new Point(24, 318 + denomPanel.Height + 6);
+        lblDiff.Location = new Point(24, 318 + denomPanel.Height + 30);
+        employeePanel.Controls.Add(lblCounted);
+        employeePanel.Controls.Add(lblDiff);
+        btnExpected.Location = new Point(24, 318 + denomPanel.Height + 60);
+        btnEmployeeClose.Location = new Point(220, 318 + denomPanel.Height + 60);
         employeePanel.Controls.Add(btnExpected);
         employeePanel.Controls.Add(btnEmployeeClose);
 
-        cashPanel.Controls.Add(CreateSectionTitle("Cierre de caja", 24, 20));
-        AddLabeledControl(cashPanel, "Fecha automatica", lblCashDate, 64);
-        lblBase.Location = new Point(24, 128);
-        lblSysAmt.Location = new Point(24, 150);
-        lblExpectedCash.Location = new Point(24, 172);
+        var hasPermission = _currentUser.HasPermission(PermissionKeys.EmployeeClosure);
+        if (!hasPermission)
+        {
+            cmbUsers.Enabled = false;
+            fromPicker.Enabled = false;
+            toPicker.Enabled = false;
+            denomPanel.Enabled = false;
+            btnExpected.Enabled = false;
+            btnEmployeeClose.Enabled = false;
+            lblExpectedCash.Text = "El cierre de empleado requiere permiso asignado.";
+        }
+
+        return () =>
+        {
+            if (hasPermission)
+            {
+                CalculateExpected();
+            }
+        };
+    }
+
+    private Action BuildCashClosure(Panel cashPanel)
+    {
+        var lblCashDate = CreateInfoLabel(DateTime.Now.ToString("dd/MM/yyyy HH:mm"));
+        lblCashDate.Size = new Size(300, 24);
+        var baseAmount = AppSettings.MinimumCashAmount;
+
+        var lblBase = CreateInfoLabel($"Fondo de caja (base): {MoneyHelper.Format(baseAmount)}");
+        lblBase.ForeColor = Color.FromArgb(100, 116, 139);
+        var lblCash = CreateInfoLabel("Efectivo cobrado hoy: ₡0");
+        var lblSinpe = CreateInfoLabel("SINPE cobrado hoy: ₡0");
+        var lblExpectedCash = CreateInfoLabel("Esperado en caja (efectivo + fondo): ₡0");
+        var lblCounted = CreateInfoLabel("Contado (físico): ₡0");
+        var lblDiff = CreateInfoLabel("Diferencia: ₡0");
+        foreach (var lbl in new[] { lblBase, lblCash, lblSinpe, lblExpectedCash, lblCounted, lblDiff })
+        {
+            lbl.Size = new Size(450, 22);
+        }
+
+        var (denomPanel, denomInputs) = CreateDenominationPanel();
+        var btnSystem = CreateSecondaryButton("Recalcular");
+        var btnCashClose = CreatePrimaryButton("Cerrar caja");
+
+        decimal cashSystem = 0m;
+        decimal sinpeSystem = 0m;
+
+        void UpdateSummary()
+        {
+            var counted = denomInputs.Sum(item => item.Key * item.Value.Value);
+            var expected = cashSystem + baseAmount;
+            var difference = counted - expected;
+            lblCash.Text = $"Efectivo cobrado hoy: {MoneyHelper.Format(cashSystem)}";
+            lblSinpe.Text = $"SINPE cobrado hoy: {MoneyHelper.Format(sinpeSystem)}";
+            lblExpectedCash.Text = $"Esperado en caja (efectivo + fondo): {MoneyHelper.Format(expected)}";
+            lblCounted.Text = $"Contado (físico): {MoneyHelper.Format(counted)}";
+            var estado = difference == 0 ? "✔ Cuadra" : difference > 0 ? "▲ Sobra" : "▼ Falta";
+            lblDiff.Text = $"Diferencia: {MoneyHelper.Format(difference)}    {estado}";
+            lblDiff.ForeColor = difference == 0
+                ? Color.FromArgb(22, 163, 74)
+                : difference > 0 ? Color.FromArgb(202, 138, 4) : Color.FromArgb(220, 38, 38);
+        }
+
+        void Recalculate()
+        {
+            var totals = _controller.GetSummaryForDate(DateTime.Today);
+            cashSystem = totals.Cash;
+            sinpeSystem = totals.Sinpe;
+            lblCashDate.Text = DateTime.Now.ToString("dd/MM/yyyy HH:mm");
+            UpdateSummary();
+        }
+
+        foreach (var input in denomInputs.Values)
+        {
+            input.ValueChanged += (_, _) => UpdateSummary();
+        }
+
+        btnSystem.Click += (_, _) => ExecuteThrottled(btnSystem, Recalculate);
+
+        btnCashClose.Click += (_, _) => ExecuteThrottled(btnCashClose, () =>
+        {
+            var denominations = denomInputs.ToDictionary(item => item.Key, item => Convert.ToInt32(item.Value.Value));
+            var counted = denominations.Sum(item => item.Key * item.Value);
+            var expected = cashSystem + baseAmount;
+            var difference = counted - expected;
+            var closureId = _controller.CreateCashClosure(DateTime.Now, denominations, _currentUser.UserId);
+            MessageBox.Show(
+                $"Cierre de caja #{closureId} creado.\n\n"
+                + $"Fondo base:       {MoneyHelper.Format(baseAmount)}\n"
+                + $"Efectivo sistema: {MoneyHelper.Format(cashSystem)}\n"
+                + $"SINPE sistema:    {MoneyHelper.Format(sinpeSystem)}\n"
+                + $"Esperado caja:    {MoneyHelper.Format(expected)}\n"
+                + $"Contado:          {MoneyHelper.Format(counted)}\n"
+                + $"Diferencia:       {MoneyHelper.Format(difference)}",
+                "Cierre de caja",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            foreach (var input in denomInputs.Values)
+            {
+                input.Value = 0;
+            }
+            Recalculate();
+        });
+
+        cashPanel.Controls.Add(CreateSectionTitle("Cierre de caja", 24, 16));
+        AddLabeledControl(cashPanel, "Fecha automática", lblCashDate, 56);
+        lblBase.Location = new Point(24, 112);
+        lblCash.Location = new Point(24, 134);
+        lblSinpe.Location = new Point(24, 156);
+        lblExpectedCash.Location = new Point(24, 178);
         cashPanel.Controls.Add(lblBase);
-        cashPanel.Controls.Add(lblSysAmt);
+        cashPanel.Controls.Add(lblCash);
+        cashPanel.Controls.Add(lblSinpe);
         cashPanel.Controls.Add(lblExpectedCash);
-        cashPanel.Controls.Add(CreateSectionTitle("Billetes y monedas", 24, 202));
-        denominationPanel.Location = new Point(24, 234);
-        denominationPanel.Size = new Size(460, 256);
-        cashPanel.Controls.Add(denominationPanel);
-        lblCounted.Location = new Point(24, 498);
-        lblDiff.Location = new Point(24, 522);
+        cashPanel.Controls.Add(CreateSectionTitle("Billetes y monedas", 24, 208));
+        denomPanel.Location = new Point(24, 238);
+        cashPanel.Controls.Add(denomPanel);
+        lblCounted.Location = new Point(24, 238 + denomPanel.Height + 6);
+        lblDiff.Location = new Point(24, 238 + denomPanel.Height + 30);
         cashPanel.Controls.Add(lblCounted);
         cashPanel.Controls.Add(lblDiff);
-        btnSystem.Location = new Point(24, 556);
-        btnCashClose.Location = new Point(220, 556);
+        btnSystem.Location = new Point(24, 238 + denomPanel.Height + 60);
+        btnCashClose.Location = new Point(220, 238 + denomPanel.Height + 60);
         cashPanel.Controls.Add(btnSystem);
         cashPanel.Controls.Add(btnCashClose);
-        UpdateSummary();
 
-        if (!_currentUser.HasPermission(PermissionKeys.CashClosure))
+        var hasPermission = _currentUser.HasPermission(PermissionKeys.CashClosure);
+        if (!hasPermission)
         {
             btnCashClose.Enabled = false;
-            denominationPanel.Enabled = false;
+            denomPanel.Enabled = false;
             btnSystem.Enabled = false;
-            lblSysAmt.Visible = false;
+            lblCash.Visible = false;
+            lblSinpe.Visible = false;
             lblExpectedCash.Visible = false;
             lblCounted.Visible = false;
             lblDiff.Visible = false;
             lblBase.Text = "El cierre de caja requiere permiso asignado.";
         }
 
-        if (!_currentUser.HasPermission(PermissionKeys.EmployeeClosure))
+        return () =>
         {
-            cmbUsers.Enabled = false;
-            fromPicker.Enabled = false;
-            toPicker.Enabled = false;
-            txtDelivered.Enabled = false;
-            btnExpected.Enabled = false;
-            btnEmployeeClose.Enabled = false;
-            lblExpected.Text = "El cierre de empleado requiere permiso asignado.";
+            if (hasPermission)
+            {
+                Recalculate();
+            }
+        };
+    }
+
+    private (Panel panel, Dictionary<decimal, NumericUpDown> inputs) CreateDenominationPanel()
+    {
+        var inputs = new Dictionary<decimal, NumericUpDown>();
+        var flow = new FlowLayoutPanel
+        {
+            Size = new Size(456, 264),
+            AutoScroll = false,
+            WrapContents = true
+        };
+
+        foreach (var denomination in DenominationValues)
+        {
+            var row = new Panel { Width = 214, Height = 34, Margin = new Padding(0, 0, 8, 8) };
+            var label = new Label
+            {
+                Text = MoneyHelper.Format(denomination),
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(71, 85, 105),
+                Location = new Point(0, 7),
+                Width = 80
+            };
+            var input = new NumericUpDown
+            {
+                Font = new Font("Segoe UI", 9F),
+                Width = 110,
+                Maximum = 100000,
+                Location = new Point(88, 3)
+            };
+            inputs.Add(denomination, input);
+            row.Controls.Add(label);
+            row.Controls.Add(input);
+            flow.Controls.Add(row);
         }
 
-        root.Controls.Add(employeePanel, 0, 0);
-        root.Controls.Add(cashPanel, 1, 0);
-        tabRegister.Controls.Add(root);
-        BuildClosureHistoryTab(tabHistory);
-        tabHistory.Enabled = _currentUser.HasPermission(PermissionKeys.ClosureHistory);
-        pnlContent.Controls.Add(tabs);
+        return (flow, inputs);
     }
 
     private void BuildClosureHistoryTab(TabPage tabHistory)
@@ -1075,13 +1491,13 @@ public partial class MainForm : Form
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
             Font = new Font("Segoe UI", 10F),
-            Width = 160
+            Width = 140
         };
-        cmbType.Items.AddRange(new object[] { "Todos", "Empleado", "Caja" });
+        cmbType.Items.AddRange(["Todos", "Empleado", "Caja"]);
         cmbType.SelectedIndex = 0;
 
-        var fromDate = new DateTimePicker { Font = new Font("Segoe UI", 10F), Format = DateTimePickerFormat.Short, Width = 130, Value = DateTime.Today.AddDays(-7) };
-        var toDate = new DateTimePicker { Font = new Font("Segoe UI", 10F), Format = DateTimePickerFormat.Short, Width = 130, Value = DateTime.Today };
+        var fromDate = new DateTimePicker { Font = new Font("Segoe UI", 10F), Format = DateTimePickerFormat.Short, Width = 120, Value = DateTime.Today.AddDays(-7) };
+        var toDate = new DateTimePicker { Font = new Font("Segoe UI", 10F), Format = DateTimePickerFormat.Short, Width = 120, Value = DateTime.Today };
         var btnSearch = CreateSecondaryButton("Buscar");
         var grid = CreateGrid(DockStyle.Fill);
 
@@ -1093,7 +1509,8 @@ public partial class MainForm : Form
             ReadOnly = true,
             BackColor = Color.White
         };
-        var btnPdf = CreatePrimaryButton("Descargar PDF");
+        var btnPdf = CreatePrimaryButton("PDF del cierre");
+        var btnPdfRange = CreateSecondaryButton("PDF del rango");
 
         List<ClosureHistoryRecord> currentRecords = [];
         ClosureHistoryRecord? selectedRecord = null;
@@ -1159,11 +1576,29 @@ public partial class MainForm : Form
                 MessageBox.Show("PDF generado correctamente.", "Historial de cierres", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         });
+        btnPdfRange.Click += (_, _) => ExecuteThrottled(btnPdfRange, () =>
+        {
+            if (currentRecords.Count == 0)
+            {
+                throw new InvalidOperationException("No hay cierres en el rango para exportar.");
+            }
+
+            using var dialog = new SaveFileDialog
+            {
+                Filter = "PDF (*.pdf)|*.pdf",
+                FileName = $"Cierres_{fromDate.Value:yyyyMMdd}_{toDate.Value:yyyyMMdd}.pdf"
+            };
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+            {
+                _pdfExportService.ExportClosureRange(currentRecords, fromDate.Value, toDate.Value, dialog.FileName);
+                MessageBox.Show("PDF del rango generado correctamente.", "Historial de cierres", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        });
 
         var filterPanel = new Panel { Dock = DockStyle.Fill };
         AddLabeledControl(filterPanel, "Tipo", cmbType, 4, 0);
-        AddLabeledControl(filterPanel, "Desde", fromDate, 4, 200);
-        AddLabeledControl(filterPanel, "Hasta", toDate, 4, 360);
+        AddLabeledControl(filterPanel, "Desde", fromDate, 4, 160);
+        AddLabeledControl(filterPanel, "Hasta", toDate, 4, 300);
         btnSearch.Location = new Point(0, 62);
         btnSearch.Size = new Size(120, 34);
         filterPanel.Controls.Add(btnSearch);
@@ -1180,6 +1615,14 @@ public partial class MainForm : Form
         listLayout.Controls.Add(grid, 0, 1);
         listPanel.Controls.Add(listLayout);
 
+        var buttonRow = new Panel { Dock = DockStyle.Fill };
+        btnPdf.Location = new Point(0, 8);
+        btnPdf.Size = new Size(180, 42);
+        btnPdfRange.Location = new Point(190, 8);
+        btnPdfRange.Size = new Size(180, 42);
+        buttonRow.Controls.Add(btnPdf);
+        buttonRow.Controls.Add(btnPdfRange);
+
         var previewLayout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -1191,7 +1634,7 @@ public partial class MainForm : Form
         previewLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
         previewLayout.Controls.Add(CreateSectionTitle("Vista previa"), 0, 0);
         previewLayout.Controls.Add(preview, 0, 1);
-        previewLayout.Controls.Add(btnPdf, 0, 2);
+        previewLayout.Controls.Add(buttonRow, 0, 2);
         previewPanel.Controls.Add(previewLayout);
 
         root.Controls.Add(listPanel, 0, 0);
@@ -1219,12 +1662,10 @@ public partial class MainForm : Form
         }
         catch (InvalidOperationException ex)
         {
-            // Reglas de negocio / validaciones: el mensaje es seguro de mostrar al usuario.
             MessageBox.Show(ex.Message, "Parqueo Mahischa", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         catch (Exception ex)
         {
-            // Errores inesperados (BD, sistema): mensaje genérico y registro en auditoría.
             AuditService.Log(_currentUser.UserId, "Error", "Aplicacion", null, $"{ex.GetType().Name}: {ex.Message}");
             MessageBox.Show(
                 "Ocurrió un error inesperado. Intente de nuevo; si el problema continúa, contacte al administrador.",
@@ -1248,7 +1689,7 @@ public partial class MainForm : Form
         }
         finally
         {
-            var timer = new System.Windows.Forms.Timer { Interval = 5000 };
+            var timer = new System.Windows.Forms.Timer { Interval = 2500 };
             timer.Tick += (_, _) =>
             {
                 timer.Stop();
@@ -1277,10 +1718,12 @@ public partial class MainForm : Form
         {
             lines.AddRange(
             [
-                $"Sistema:        {MoneyHelper.Format(record.SystemAmount)}",
-                $"Minimo caja:    {MoneyHelper.Format(record.MinimumCashAmount)}",
-                $"Contado fisico: {MoneyHelper.Format(record.CountedAmount)}",
-                $"Diferencia:     {MoneyHelper.Format(record.DifferenceAmount)}",
+                $"Efectivo (sistema): {MoneyHelper.Format(record.CashAmount)}",
+                $"SINPE (sistema):    {MoneyHelper.Format(record.SinpeAmount)}",
+                $"Fondo de caja:      {MoneyHelper.Format(record.MinimumCashAmount)}",
+                $"Esperado en caja:   {MoneyHelper.Format(record.CashAmount + record.MinimumCashAmount)}",
+                $"Contado fisico:     {MoneyHelper.Format(record.CountedAmount)}",
+                $"Diferencia:         {MoneyHelper.Format(record.DifferenceAmount)}",
                 string.Empty,
                 "Billetes y monedas:"
             ]);
@@ -1295,20 +1738,23 @@ public partial class MainForm : Form
                 $"Empleado:   {record.EmployeeName}",
                 $"Desde:      {record.FromAt:dd/MM/yyyy HH:mm}",
                 $"Hasta:      {record.ToAt:dd/MM/yyyy HH:mm}",
+                $"Efectivo:   {MoneyHelper.Format(record.CashAmount)}",
+                $"SINPE:      {MoneyHelper.Format(record.SinpeAmount)}",
                 $"Esperado:   {MoneyHelper.Format(record.ExpectedAmount)}",
                 $"Entregado:  {MoneyHelper.Format(record.DeliveredAmount)}",
                 $"Diferencia: {MoneyHelper.Format(record.DifferenceAmount)}"
             ]);
+
+            if (record.Denominations.Count > 0)
+            {
+                lines.Add(string.Empty);
+                lines.Add("Billetes y monedas entregados:");
+                lines.AddRange(record.Denominations.Select(d =>
+                    $"{MoneyHelper.Format(d.Denomination),10} x {d.Quantity,4} = {MoneyHelper.Format(d.TotalAmount),12}"));
+            }
         }
 
         return string.Join(Environment.NewLine, lines);
-    }
-
-    private void ClearContent()
-    {
-        pnlContent.SuspendLayout();
-        pnlContent.Controls.Clear();
-        pnlContent.ResumeLayout();
     }
 
     private void SetActive(Button button, string title)
@@ -1323,7 +1769,6 @@ public partial class MainForm : Form
 
         _activeMenuButton = button;
         button.BackColor = _accentDark;
-        // El botón activo mantiene el color de acento incluso al pasar el mouse.
         button.FlatAppearance.MouseOverBackColor = _accentDark;
 
         if (_navIndicator is not null)
@@ -1356,6 +1801,7 @@ public partial class MainForm : Form
         };
         var lblValue = new Label
         {
+            Name = "value",
             Text = value,
             Font = new Font("Segoe UI", 22F, FontStyle.Bold),
             ForeColor = color,
@@ -1373,27 +1819,15 @@ public partial class MainForm : Form
         panel.Controls.Add(lblValue);
         panel.Controls.Add(lblTitleCard);
         panel.Controls.Add(accentBar);
-
-        var tint = Color.FromArgb(249, 251, 253);
-        var fade = new UiKit.ColorFade(panel);
-        void Enter(object? s, EventArgs e) => fade.To(tint);
-        void Leave(object? s, EventArgs e)
-        {
-            if (!panel.ClientRectangle.Contains(panel.PointToClient(Cursor.Position)))
-            {
-                fade.To(Color.White);
-            }
-        }
-
-        panel.MouseEnter += Enter;
-        panel.MouseLeave += Leave;
-        foreach (Control child in panel.Controls)
-        {
-            child.MouseEnter += Enter;
-            child.MouseLeave += Leave;
-        }
-
         return panel;
+    }
+
+    private static void SetCardValue(Panel card, string value)
+    {
+        if (card.Controls["value"] is Label label)
+        {
+            label.Text = value;
+        }
     }
 
     private Label CreateSectionTitle(string text) => CreateSectionTitle(text, 0, 0);
@@ -1414,7 +1848,7 @@ public partial class MainForm : Form
     {
         BorderStyle = BorderStyle.FixedSingle,
         Font = new Font("Segoe UI", 12F),
-        Width = 320
+        Width = 300
     };
 
     private TextBox CreateMoneyTextBox()
@@ -1553,5 +1987,3 @@ internal sealed class PermissionListItem(string key, string label)
 
     public override string ToString() => label;
 }
-
-

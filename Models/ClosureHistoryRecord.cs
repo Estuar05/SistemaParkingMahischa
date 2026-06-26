@@ -15,6 +15,8 @@ public sealed class ClosureHistoryRecord
     public decimal MinimumCashAmount { get; set; }
     public decimal SystemAmount { get; set; }
     public decimal CountedAmount { get; set; }
+    public decimal CashAmount { get; set; }
+    public decimal SinpeAmount { get; set; }
     public List<CashDenominationDetail> Denominations { get; set; } = [];
 
     public string DisplayName => ClosureType == "Caja"
