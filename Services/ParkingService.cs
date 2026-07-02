@@ -396,11 +396,13 @@ public sealed class ParkingService
     }
 
     /// <summary>
-    /// Tarifa por hora: horas completas al monto por hora, más la fracción final según la tabla
-    /// de 10 minutos (10m=₡200, 20m=₡300, 30m=₡400, 40m=₡500, 50m=₡600, 60m=monto de la hora).
-    /// La fracción no se cobra cuando solo se pasó del último cobro por el tiempo de gracia.
-    /// Con tope por bloque (ej. ₡3000 por cada 12h) el bloque nunca cobra más del tope: al
-    /// superarlo, la estadía pasa automáticamente a la tarifa diaria.
+    /// Tarifa por hora: la PRIMERA hora se cobra completa desde que el vehículo ingresa
+    /// (ej. ₡700 aunque lleve 5 minutos). A partir de cada hora completa, el excedente se
+    /// cobra según la tabla de fracciones de 10 minutos (10m=₡200, 20m=₡300, 30m=₡400,
+    /// 40m=₡500, 50m=₡600, hora completa=monto de la hora). La fracción no se cobra cuando
+    /// solo se pasó del último cobro por el tiempo de gracia. Con tope por bloque
+    /// (ej. ₡3000 por cada 12h) el bloque nunca cobra más del tope: al superarlo, la
+    /// estadía pasa automáticamente a la tarifa diaria.
     /// </summary>
     private static decimal CalculateHourlyAmount(double minutes, decimal amount, int graceMinutes, int? blockMinutes, decimal? blockAmount)
     {
@@ -416,13 +418,14 @@ public sealed class ParkingService
         var fullHours = (long)Math.Floor(remaining / 60d);
         var fractionMinutes = remaining - (fullHours * 60d);
 
-        // Al inicio de la estadía siempre se cobra la primera fracción (se cobra desde que
-        // ingresa); después, la fracción solo se cobra si supera el tiempo de gracia.
-        var startOfStay = fullBlocks == 0 && fullHours == 0;
-        var fractionCost = startOfStay || fractionMinutes > graceMinutes
-            ? FractionPrice(fractionMinutes, amount)
-            : 0m;
+        // Al inicio de la estadía la primera hora se cobra completa por adelantado; la tabla
+        // de fracciones solo aplica al excedente después de una hora completa.
+        if (fullBlocks == 0 && fullHours == 0)
+        {
+            return hasCap ? Math.Min(amount, blockAmount!.Value) : amount;
+        }
 
+        var fractionCost = fractionMinutes > graceMinutes ? FractionPrice(fractionMinutes, amount) : 0m;
         var blockCost = (fullHours * amount) + fractionCost;
         if (!hasCap)
         {

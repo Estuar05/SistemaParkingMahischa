@@ -73,9 +73,12 @@ public static class HelpContent
             • 'Ocultar vehículos con salida': muestra solo los autos que siguen adentro.
 
             ── CÓMO COBRA LA TARIFA POR HORA ──
-            El cobro empieza desde que el vehículo ingresa (nunca sale gratis):
-            • Hasta 10 minutos: ₡200 · 20 min: ₡300 · 30 min: ₡400 · 40 min: ₡500 · 50 min: ₡600.
-            • Cada hora completa: ₡700 (2 horas ₡1400, 3 horas ₡2100, etc.).
+            • La PRIMERA HORA se cobra completa (₡700) desde que el vehículo ingresa,
+              aunque lleve pocos minutos.
+            • Después de cada hora completa, el excedente se cobra por fracción:
+              hasta 10 min extra: ₡200 · 20 min: ₡300 · 30 min: ₡400 · 40 min: ₡500 · 50 min: ₡600.
+              Ejemplo: 1 hora y 20 minutos = ₡700 + ₡300 = ₡1000.
+            • Horas completas: ₡700 cada una (2 horas ₡1400, 3 horas ₡2100, etc.).
             • El tiempo de gracia evita cobrar de más por pasarse unos minutos: con gracia de 10,
               una estadía de 1 hora y 2 minutos cobra solo la hora (₡700).
             • Al pasar del tope de ₡3000 por cada 12 horas, se cobra automáticamente como diaria.
