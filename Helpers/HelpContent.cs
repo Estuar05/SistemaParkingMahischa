@@ -72,8 +72,13 @@ public static class HelpContent
             • 'Reimprimir': vuelve a imprimir el tiquete del vehículo seleccionado.
             • 'Ocultar vehículos con salida': muestra solo los autos que siguen adentro.
 
-            La tarifa por hora se cobra por hora, pero al pasar del tope de ₡3000 por cada 12 horas
-            se cobra automáticamente como tarifa diaria.
+            ── CÓMO COBRA LA TARIFA POR HORA ──
+            El cobro empieza desde que el vehículo ingresa (nunca sale gratis):
+            • Hasta 10 minutos: ₡200 · 20 min: ₡300 · 30 min: ₡400 · 40 min: ₡500 · 50 min: ₡600.
+            • Cada hora completa: ₡700 (2 horas ₡1400, 3 horas ₡2100, etc.).
+            • El tiempo de gracia evita cobrar de más por pasarse unos minutos: con gracia de 10,
+              una estadía de 1 hora y 2 minutos cobra solo la hora (₡700).
+            • Al pasar del tope de ₡3000 por cada 12 horas, se cobra automáticamente como diaria.
             """,
 
         ["Ingresos"] =
@@ -104,8 +109,9 @@ public static class HelpContent
                • Dia / Semana / Mes: cobra por cada día, semana o mes.
                • Fija: cobra un monto único, sin importar el tiempo.
             4. Escriba el MONTO en colones.
-            5. MINUTOS DE GRACIA: minutos al inicio que NO se cobran
-               (ejemplo: 10 = los primeros 10 minutos son gratis).
+            5. MINUTOS DE GRACIA: margen para no cobrar de más por pasarse unos minutos del
+               último cobro (ejemplo: con gracia de 10, una estadía de 1h02m cobra solo la hora).
+               El cobro siempre empieza desde que el vehículo ingresa.
             6. TOPE POR 12H (solo tarifas por hora): si lo marca, la tarifa cobra por hora pero
                nunca más del monto indicado por cada 12 horas. Al pasar de ese tope, la estadía
                se cobra como tarifa diaria. Ejemplo: ₡700/hora con tope de ₡3000 por 12h.
@@ -151,30 +157,34 @@ public static class HelpContent
 
             ── CIERRE DE EMPLEADO (lado izquierdo) ──
             Sirve para saber cuánto EFECTIVO debe entregar un empleado.
-            1. Elija el EMPLEADO.
-            2. Elija el rango DESDE / HASTA (las fechas y horas del turno).
-            3. Presione 'Calcular esperado'. El sistema muestra el EFECTIVO esperado y, aparte,
-               cuánto cobró por SINPE (el SINPE no se entrega en físico).
-            4. Cuente los billetes y monedas ENTREGADOS y escriba la cantidad de cada uno.
-            5. Presione 'Cerrar empleado'. El sistema muestra si hay diferencia.
+            Todo se calcula SOLO: al elegir el empleado y el rango DESDE / HASTA, el sistema
+            muestra de inmediato el EFECTIVO esperado y, aparte, cuánto cobró por SINPE
+            (el SINPE no se entrega en físico).
+            1. Elija el EMPLEADO y el rango del turno.
+            2. Cuente los billetes y monedas ENTREGADOS y escriba la cantidad de cada uno
+               (solo con el teclado; escriba el número en la casilla).
+            3. Presione 'Cerrar empleado'. El sistema muestra si hay diferencia y le ofrece
+               IMPRIMIR EL TIQUETE del cierre para entregarlo junto con el dinero.
 
             ── CIERRE DE CAJA (lado derecho) ──
-            Sirve para cuadrar la caja al final del día.
-            En la caja SIEMPRE deben quedar ₡20 000 como FONDO BASE.
-
-            El sistema le muestra:
-            • Fondo de caja (base): los ₡20 000 que siempre deben estar.
-            • Efectivo cobrado hoy: el efectivo que se cobró hoy (el SINPE se muestra aparte).
-            • Esperado en caja: el fondo base + el efectivo cobrado (lo que DEBERÍA haber en físico).
-            El SINPE NO se cuenta en la caja física, por eso se muestra por separado.
+            Sirve para cuadrar el FONDO DE CAJA al final del día. Lo cobrado del día NO cuenta
+            aquí: ese dinero se entrega con el cierre de empleado. En la caja solo debe quedar
+            el fondo (los ₡20 000 base).
 
             Pasos:
-            1. Cuente los billetes y monedas y escriba la cantidad de cada uno.
-            2. El sistema suma el CONTADO y le muestra la DIFERENCIA:
-               • Cuadra: el dinero coincide con lo esperado. Todo bien.
-               • Sobra: hay MÁS dinero del esperado.
-               • Falta: hay MENOS dinero del esperado.
-            3. Presione 'Cerrar caja' para guardar el cierre.
+            1. Cuente los billetes y monedas que quedan en la caja y escriba la cantidad de
+               cada uno.
+            2. El sistema suma el CONTADO y lo compara con el FONDO al instante:
+               • Cuadra: queda exactamente el fondo. Todo bien.
+               • Sobra: hay MÁS dinero que el fondo.
+               • Falta: hay MENOS dinero que el fondo.
+            3. Presione 'Cerrar caja' para guardar el cierre. También puede imprimir el tiquete.
+
+            El administrador puede corregir el FONDO DE CAJA con el botón 'Cambiar fondo';
+            el valor queda guardado en la base de datos para todas las computadoras.
+
+            En el HISTORIAL puede reimprimir el tiquete de cualquier cierre con el botón
+            'Imprimir tiquete'.
 
             ═══ PESTAÑA 'HISTORIAL' ═══
             Busque cierres anteriores por fecha y por tipo (empleado o caja),

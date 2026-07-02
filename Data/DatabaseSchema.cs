@@ -317,5 +317,36 @@ BEGIN
     WHERE RateName = N'Por día' AND RateType = N'Dia';
 END
 GO
+
+-- Configuración de la aplicación guardada en la base de datos, para que sea la misma en
+-- cualquier instalación aunque el archivo .config local sea distinto (el actualizador no
+-- reemplaza el .config del cliente).
+IF OBJECT_ID('dbo.AppConfig', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.AppConfig
+    (
+        ConfigKey nvarchar(80) NOT NULL CONSTRAINT PK_AppConfig PRIMARY KEY,
+        ConfigValue nvarchar(200) NOT NULL,
+        UpdatedAt datetime2(0) NOT NULL CONSTRAINT DF_AppConfig_UpdatedAt DEFAULT(SYSDATETIME())
+    );
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM dbo.AppConfig WHERE ConfigKey = N'MinimumCashAmount')
+    INSERT INTO dbo.AppConfig(ConfigKey, ConfigValue) VALUES (N'MinimumCashAmount', N'20000');
+GO
+
+-- El cierre de caja compara el contado únicamente contra el fondo de caja: lo cobrado del día
+-- se entrega en el cierre de empleado, no debe quedar en la caja.
+IF EXISTS (
+    SELECT 1 FROM sys.computed_columns
+    WHERE object_id = OBJECT_ID('dbo.CashClosures')
+      AND name = 'DifferenceAmount'
+      AND definition LIKE '%SystemAmount%')
+BEGIN
+    ALTER TABLE dbo.CashClosures DROP COLUMN DifferenceAmount;
+    ALTER TABLE dbo.CashClosures ADD DifferenceAmount AS (CountedAmount - MinimumCashAmount) PERSISTED;
+END
+GO
 """;
 }

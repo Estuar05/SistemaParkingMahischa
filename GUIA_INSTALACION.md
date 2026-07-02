@@ -26,7 +26,7 @@ Sistema local de parqueo (Windows + SQL Server). La aplicación se publica **sel
 | `connectionString` → `Data Source` | Instancia de SQL Server | `.\SQLEXPRESS` |
 | `BusinessName` | Nombre del negocio en pantallas y tiquete | `Parqueo Mahischa` |
 | `ContactPhone` | Teléfono que sale en el tiquete | `+506 8687 5906 / +506 8366 9729` |
-| `MinimumCashAmount` | Mínimo de caja | `50000` |
+| `MinimumCashAmount` | Fondo de caja de respaldo (el valor real vive en la base de datos, tabla `dbo.AppConfig`, y se cambia desde Cierres → "Cambiar fondo") | `20000` |
 | `UpdateRepository` | Repo de GitHub para actualizaciones (`usuario/repo`) | *(vacío)* |
 | `DefaultAdminUser` / `DefaultAdminCedula` / `DefaultAdminPassword` | Admin inicial | `admin` / `000000000` / `admin123` |
 

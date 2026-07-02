@@ -362,6 +362,11 @@ public sealed class ParkingService
         CalculateAmount(session.EntryAt, exitAt, session.EffectiveRateType, session.EffectiveRateAmount,
             session.EffectiveGraceMinutes, session.EffectiveBlockMinutes, session.EffectiveBlockAmount);
 
+    /// <summary>
+    /// El cobro empieza desde el ingreso (nunca sale gratis). El tiempo de gracia NO regala los
+    /// primeros minutos: sirve para no cobrar una unidad adicional por pasarse unos pocos minutos
+    /// del último cobro (ej. con gracia de 10, una estadía de 1h02m cobra solo la hora).
+    /// </summary>
     public static decimal CalculateAmount(
         DateTime entryAt,
         DateTime exitAt,
@@ -372,36 +377,67 @@ public sealed class ParkingService
         decimal? blockAmount = null)
     {
         var minutes = Math.Max(0, (exitAt - entryAt).TotalMinutes);
-        if (minutes <= graceMinutes)
+
+        if (rateType == "Hora")
         {
-            return 0m;
+            return CalculateHourlyAmount(minutes, amount, graceMinutes, blockMinutes, blockAmount);
         }
 
-        var billableMinutes = Math.Max(1, minutes - graceMinutes);
-
-        // Tarifa por hora con tope por bloque: se cobra por hora (ej. ₡700) pero nunca más de
-        // BlockAmount (ej. ₡3000) por cada bloque de BlockMinutes (ej. 12h). Al pasarse del tope,
-        // la estadía se cobra automáticamente como tarifa diaria.
-        if (rateType == "Hora" && blockMinutes is int blockMin and > 0 && blockAmount is decimal cap and > 0)
-        {
-            var fullBlocks = (long)Math.Floor(billableMinutes / blockMin);
-            var remainderMinutes = billableMinutes - (fullBlocks * blockMin);
-            var remainderHours = remainderMinutes > 0 ? Math.Ceiling(remainderMinutes / 60d) : 0d;
-            var remainderCost = Math.Min(Convert.ToDecimal(remainderHours) * amount, cap);
-            return (fullBlocks * cap) + remainderCost;
-        }
-
+        var billableMinutes = Math.Max(0, minutes - graceMinutes);
         var units = rateType switch
         {
-            "Hora" => Math.Ceiling(billableMinutes / 60d),
-            "Dia" => Math.Ceiling(billableMinutes / 1440d),
-            "Semana" => Math.Ceiling(billableMinutes / 10080d),
-            "Mes" => Math.Ceiling(billableMinutes / 43200d),
-            "Fija" => 1d,
-            _ => 1d
+            "Dia" => Math.Max(1, Math.Ceiling(billableMinutes / 1440d)),
+            "Semana" => Math.Max(1, Math.Ceiling(billableMinutes / 10080d)),
+            "Mes" => Math.Max(1, Math.Ceiling(billableMinutes / 43200d)),
+            _ => 1d // Fija
         };
 
         return amount * Convert.ToDecimal(units);
+    }
+
+    /// <summary>
+    /// Tarifa por hora: horas completas al monto por hora, más la fracción final según la tabla
+    /// de 10 minutos (10m=₡200, 20m=₡300, 30m=₡400, 40m=₡500, 50m=₡600, 60m=monto de la hora).
+    /// La fracción no se cobra cuando solo se pasó del último cobro por el tiempo de gracia.
+    /// Con tope por bloque (ej. ₡3000 por cada 12h) el bloque nunca cobra más del tope: al
+    /// superarlo, la estadía pasa automáticamente a la tarifa diaria.
+    /// </summary>
+    private static decimal CalculateHourlyAmount(double minutes, decimal amount, int graceMinutes, int? blockMinutes, decimal? blockAmount)
+    {
+        var hasCap = blockMinutes is > 0 && blockAmount is > 0;
+        long fullBlocks = 0;
+        var remaining = minutes;
+        if (hasCap)
+        {
+            fullBlocks = (long)Math.Floor(minutes / blockMinutes!.Value);
+            remaining = minutes - (fullBlocks * (double)blockMinutes.Value);
+        }
+
+        var fullHours = (long)Math.Floor(remaining / 60d);
+        var fractionMinutes = remaining - (fullHours * 60d);
+
+        // Al inicio de la estadía siempre se cobra la primera fracción (se cobra desde que
+        // ingresa); después, la fracción solo se cobra si supera el tiempo de gracia.
+        var startOfStay = fullBlocks == 0 && fullHours == 0;
+        var fractionCost = startOfStay || fractionMinutes > graceMinutes
+            ? FractionPrice(fractionMinutes, amount)
+            : 0m;
+
+        var blockCost = (fullHours * amount) + fractionCost;
+        if (!hasCap)
+        {
+            return blockCost;
+        }
+
+        var cap = blockAmount!.Value;
+        return (fullBlocks * cap) + Math.Min(blockCost, cap);
+    }
+
+    /// <summary>Precio de la fracción final en tramos de 10 minutos, sin superar el monto de la hora.</summary>
+    private static decimal FractionPrice(double fractionMinutes, decimal hourAmount)
+    {
+        var tier = Math.Max(1, (int)Math.Ceiling(fractionMinutes / 10d));
+        return Math.Min(100m + (tier * 100m), hourAmount);
     }
 
     private const string SessionSelectSql = """

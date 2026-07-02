@@ -101,13 +101,28 @@ public static class UiKit
     {
         form.Opacity = 0;
         var timer = new System.Windows.Forms.Timer { Interval = interval };
+        void Finish()
+        {
+            timer.Stop();
+            timer.Dispose();
+        }
+
+        // Si el formulario se cierra antes de terminar la animación (ej. imprimir y cerrar
+        // de inmediato), el timer no debe volver a tocarlo: acceder a un formulario
+        // desechado lanza ObjectDisposedException.
+        form.Disposed += (_, _) => Finish();
         timer.Tick += (_, _) =>
         {
+            if (form.IsDisposed || form.Disposing)
+            {
+                Finish();
+                return;
+            }
+
             form.Opacity = Math.Min(1, form.Opacity + increment);
             if (form.Opacity >= 1)
             {
-                timer.Stop();
-                timer.Dispose();
+                Finish();
             }
         };
         timer.Start();

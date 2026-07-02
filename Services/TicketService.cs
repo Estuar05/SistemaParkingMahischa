@@ -47,6 +47,99 @@ public sealed class TicketService
         document.Print();
     }
 
+    public void PrintClosureTicket(ClosureHistoryRecord record)
+    {
+        using var document = new PrintDocument();
+        document.DocumentName = record.DisplayName;
+        document.PrintPage += (_, e) =>
+        {
+            if (e.Graphics is not null)
+            {
+                DrawClosureTicket(e.Graphics, record, new Rectangle(12, 12, 280, 460));
+            }
+        };
+        document.Print();
+    }
+
+    /// <summary>
+    /// Dibuja el tiquete de un cierre (empleado o caja) para entregarlo junto con el dinero.
+    /// Usa el mismo ancho y márgenes que el tiquete de entrada.
+    /// </summary>
+    public void DrawClosureTicket(Graphics graphics, ClosureHistoryRecord record, Rectangle bounds)
+    {
+        using var titleFont = new Font("Segoe UI", 14, FontStyle.Bold);
+        using var subtitleFont = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        using var smallFont = new Font("Segoe UI", 8, FontStyle.Regular);
+        using var rowFont = new Font("Segoe UI", 8.5f, FontStyle.Regular);
+        using var rowBoldFont = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        using var monoFont = new Font("Consolas", 8, FontStyle.Regular);
+        using var pen = new Pen(Color.FromArgb(220, 226, 235));
+        using var brush = new SolidBrush(Color.FromArgb(32, 43, 54));
+        using var mutedBrush = new SolidBrush(Color.FromArgb(90, 100, 112));
+        using var centered = new StringFormat { Alignment = StringAlignment.Center };
+        using var right = new StringFormat { Alignment = StringAlignment.Far };
+
+        var y = bounds.Top;
+        graphics.DrawString(AppSettings.BusinessName, titleFont, brush, new RectangleF(bounds.Left, y, bounds.Width, 30), centered);
+        y += 30;
+        var subtitle = record.ClosureType == "Caja" ? "CIERRE DE CAJA" : "CIERRE DE EMPLEADO";
+        graphics.DrawString($"{subtitle} #{record.ClosureId}", subtitleFont, mutedBrush, new RectangleF(bounds.Left, y, bounds.Width, 20), centered);
+        y += 24;
+        graphics.DrawLine(pen, bounds.Left, y, bounds.Right, y);
+        y += 10;
+
+        graphics.DrawString($"Generado: {record.CreatedAt:dd/MM/yyyy HH:mm}", smallFont, brush, bounds.Left, y);
+        y += 16;
+        graphics.DrawString($"Realizado por: {record.CreatedByName}", smallFont, brush, bounds.Left, y);
+        y += 20;
+
+        void Row(string label, string value, Font font)
+        {
+            graphics.DrawString(label, font, brush, bounds.Left, y);
+            graphics.DrawString(value, font, brush, new RectangleF(bounds.Left, y, bounds.Width, 16), right);
+            y += 17;
+        }
+
+        if (record.ClosureType == "Caja")
+        {
+            Row("Fondo de caja (esperado)", record.MinimumCashAmount.ToString("C0"), rowFont);
+            Row("Contado (físico)", record.CountedAmount.ToString("C0"), rowFont);
+            Row("Diferencia", record.DifferenceAmount.ToString("C0"), rowBoldFont);
+        }
+        else
+        {
+            graphics.DrawString($"Empleado: {record.EmployeeName}", smallFont, brush, bounds.Left, y);
+            y += 16;
+            graphics.DrawString($"Turno: {record.FromAt:dd/MM HH:mm} a {record.ToAt:dd/MM HH:mm}", smallFont, brush, bounds.Left, y);
+            y += 20;
+            Row("Efectivo esperado", record.ExpectedAmount.ToString("C0"), rowFont);
+            Row("SINPE cobrado (aparte)", record.SinpeAmount.ToString("C0"), rowFont);
+            Row("Entregado (contado)", record.DeliveredAmount.ToString("C0"), rowFont);
+            Row("Diferencia", record.DifferenceAmount.ToString("C0"), rowBoldFont);
+        }
+
+        var details = record.Denominations.Where(d => d.Quantity > 0).ToList();
+        if (details.Count > 0)
+        {
+            y += 4;
+            graphics.DrawLine(pen, bounds.Left, y, bounds.Right, y);
+            y += 8;
+            graphics.DrawString("Billetes y monedas", subtitleFont, brush, bounds.Left, y);
+            y += 20;
+            foreach (var detail in details)
+            {
+                graphics.DrawString($"{detail.Denomination,9:C0} x {detail.Quantity,4} = {detail.TotalAmount,12:C0}", monoFont, brush, bounds.Left, y);
+                y += 15;
+            }
+        }
+
+        y += 6;
+        graphics.DrawLine(pen, bounds.Left, y, bounds.Right, y);
+        y += 10;
+        graphics.DrawString("Entregue este tiquete junto con el dinero.", smallFont, mutedBrush,
+            new RectangleF(bounds.Left, y, bounds.Width, 30), centered);
+    }
+
     /// <summary>Dibuja el comprobante de pago (al cobrar la salida).</summary>
     public void DrawReceipt(Graphics graphics, ExitReceipt receipt, Rectangle bounds)
     {

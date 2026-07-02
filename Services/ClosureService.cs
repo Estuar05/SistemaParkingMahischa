@@ -1,4 +1,3 @@
-using SistemaParkingMahischa.Config;
 using SistemaParkingMahischa.Data;
 using SistemaParkingMahischa.Models;
 using Microsoft.Data.SqlClient;
@@ -289,7 +288,7 @@ public sealed class ClosureService
                     VALUES (@ClosureDate, @MinimumCashAmount, @SystemAmount, @SinpeAmount, @CountedAmount, @CreatedByUserId);
                     """;
                 command.Parameters.AddWithValue("@ClosureDate", date.Date);
-                command.Parameters.AddWithValue("@MinimumCashAmount", AppSettings.MinimumCashAmount);
+                command.Parameters.AddWithValue("@MinimumCashAmount", ConfigService.GetMinimumCashAmount());
                 command.Parameters.AddWithValue("@SystemAmount", totals.Cash);
                 command.Parameters.AddWithValue("@SinpeAmount", totals.Sinpe);
                 command.Parameters.AddWithValue("@CountedAmount", countedAmount);

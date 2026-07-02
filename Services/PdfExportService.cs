@@ -47,10 +47,7 @@ public sealed class PdfExportService
         {
             DrawLine(gfx, "Realizado por", record.CreatedByName, ref y);
             DrawLine(gfx, "Fecha de cierre", record.CreatedAt.ToString("dd/MM/yyyy HH:mm"), ref y);
-            DrawLine(gfx, "Efectivo (sistema)", record.CashAmount.ToString("C0"), ref y);
-            DrawLine(gfx, "SINPE (sistema)", record.SinpeAmount.ToString("C0"), ref y);
-            DrawLine(gfx, "Fondo de caja", record.MinimumCashAmount.ToString("C0"), ref y);
-            DrawLine(gfx, "Esperado en caja", (record.CashAmount + record.MinimumCashAmount).ToString("C0"), ref y);
+            DrawLine(gfx, "Fondo de caja (esperado)", record.MinimumCashAmount.ToString("C0"), ref y);
             DrawLine(gfx, "Contado fisico", record.CountedAmount.ToString("C0"), ref y);
             DrawLine(gfx, "Diferencia", record.DifferenceAmount.ToString("C0"), ref y);
             y += 14;
@@ -112,7 +109,7 @@ public sealed class PdfExportService
         {
             EnsureSpace(document, ref page, ref gfx, ref y);
             var name = record.ClosureType == "Caja" ? record.CreatedByName : record.EmployeeName;
-            var expected = record.ClosureType == "Caja" ? record.CashAmount + record.MinimumCashAmount : record.ExpectedAmount;
+            var expected = record.ClosureType == "Caja" ? record.MinimumCashAmount : record.ExpectedAmount;
             gfx.DrawString(record.ClosureType, NormalFont, XBrushes.Black, 48, y);
             gfx.DrawString(record.CreatedAt.ToString("dd/MM/yy HH:mm"), NormalFont, XBrushes.Black, 130, y);
             gfx.DrawString(Truncate(name, 24), NormalFont, XBrushes.Black, 250, y);
