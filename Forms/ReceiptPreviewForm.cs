@@ -21,7 +21,7 @@ public sealed class ReceiptPreviewForm : Form
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(340, 560);
+        ClientSize = new Size(340, 628);
         BackColor = Color.White;
         Icon = BrandAssets.Icon;
         Font = new Font("Segoe UI", 10F);
@@ -29,16 +29,16 @@ public sealed class ReceiptPreviewForm : Form
         var paper = new Panel
         {
             Location = new Point(20, 16),
-            Size = new Size(300, 472),
+            Size = new Size(300, 540),
             BackColor = Color.White,
             BorderStyle = BorderStyle.FixedSingle
         };
-        paper.Paint += (_, e) => _ticketService.DrawReceipt(e.Graphics, _receipt, new Rectangle(10, 10, 280, 452));
+        paper.Paint += (_, e) => _ticketService.DrawReceipt(e.Graphics, _receipt, new Rectangle(10, 10, 280, 520));
 
         var btnPrint = new Button
         {
             Text = "Imprimir comprobante",
-            Location = new Point(20, 500),
+            Location = new Point(20, 568),
             Size = new Size(190, 44),
             FlatStyle = FlatStyle.Flat,
             Font = new Font("Segoe UI", 10F, FontStyle.Bold),
@@ -66,7 +66,7 @@ public sealed class ReceiptPreviewForm : Form
         var btnClose = new Button
         {
             Text = "Cerrar",
-            Location = new Point(220, 500),
+            Location = new Point(220, 568),
             Size = new Size(100, 44),
             FlatStyle = FlatStyle.Flat,
             Font = new Font("Segoe UI", 10F, FontStyle.Bold),

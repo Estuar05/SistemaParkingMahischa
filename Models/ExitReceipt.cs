@@ -18,7 +18,23 @@ public sealed class ExitReceipt
     public string? Reference { get; init; }
     public string CashierName { get; init; } = string.Empty;
 
-    public static ExitReceipt FromClosedSession(ParkingSession closed, string paymentMethod, decimal? tendered, string? reference, string cashierName)
+    /// <summary>Parte pagada en efectivo cuando la forma de pago es mixta.</summary>
+    public decimal? CashPortion { get; init; }
+
+    /// <summary>Parte pagada por SINPE cuando la forma de pago es mixta.</summary>
+    public decimal? SinpePortion { get; init; }
+
+    /// <summary>Marca el comprobante como reimpresión (el cliente ya había pagado).</summary>
+    public bool IsReprint { get; init; }
+
+    public static ExitReceipt FromClosedSession(
+        ParkingSession closed,
+        string paymentMethod,
+        decimal? tendered,
+        string? reference,
+        string cashierName,
+        decimal? cashPortion = null,
+        decimal? sinpePortion = null)
     {
         var total = closed.ChargedAmount ?? 0m;
         var extra = closed.ExtraAmount ?? 0m;
@@ -35,7 +51,33 @@ public sealed class ExitReceipt
             TenderedAmount = tendered,
             ChangeAmount = paymentMethod == PaymentMethods.Cash && tendered is { } t ? t - total : null,
             Reference = reference,
-            CashierName = cashierName
+            CashierName = cashierName,
+            CashPortion = cashPortion,
+            SinpePortion = sinpePortion
+        };
+    }
+
+    /// <summary>Reconstruye el comprobante desde el pago guardado, para reimprimirlo.</summary>
+    public static ExitReceipt FromPayment(ParkingSession session, Payment payment)
+    {
+        var extra = session.ExtraAmount ?? 0m;
+        return new ExitReceipt
+        {
+            Plate = session.Plate,
+            EntryAt = session.EntryAt,
+            ExitAt = session.ExitAt ?? payment.PaidAt,
+            RateName = session.HasCustomRate ? "Personalizada" : session.RateName,
+            BaseAmount = payment.Amount - extra,
+            ExtraAmount = extra,
+            Total = payment.Amount,
+            PaymentMethod = payment.PaymentMethod,
+            TenderedAmount = payment.TenderedAmount,
+            ChangeAmount = payment.ChangeAmount,
+            Reference = payment.Reference,
+            CashierName = payment.Username,
+            CashPortion = payment.CashAmount,
+            SinpePortion = payment.SinpeAmount,
+            IsReprint = true
         };
     }
 }

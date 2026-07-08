@@ -259,6 +259,14 @@ IF COL_LENGTH('dbo.Payments', 'ChangeAmount') IS NULL
     ALTER TABLE dbo.Payments ADD ChangeAmount decimal(18,2) NULL;
 GO
 
+-- Pago mixto (Efectivo + SINPE): desglose de cuánto se pagó con cada forma.
+IF COL_LENGTH('dbo.Payments', 'CashAmount') IS NULL
+    ALTER TABLE dbo.Payments ADD CashAmount decimal(18,2) NULL;
+GO
+IF COL_LENGTH('dbo.Payments', 'SinpeAmount') IS NULL
+    ALTER TABLE dbo.Payments ADD SinpeAmount decimal(18,2) NULL;
+GO
+
 -- Desglose por forma de pago en los cierres.
 IF COL_LENGTH('dbo.CashClosures', 'SinpeAmount') IS NULL
     ALTER TABLE dbo.CashClosures ADD SinpeAmount decimal(18,2) NOT NULL CONSTRAINT DF_CashClosures_Sinpe DEFAULT(0);

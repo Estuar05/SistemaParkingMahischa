@@ -12,13 +12,19 @@ public sealed class Payment
     public string? Reference { get; set; }
     public decimal? TenderedAmount { get; set; }
     public decimal? ChangeAmount { get; set; }
+
+    /// <summary>Parte pagada en efectivo (en pagos mixtos; en pagos puros se guarda el total o cero).</summary>
+    public decimal? CashAmount { get; set; }
+
+    /// <summary>Parte pagada por SINPE (en pagos mixtos; en pagos puros se guarda el total o cero).</summary>
+    public decimal? SinpeAmount { get; set; }
 }
 
 public static class PaymentMethods
 {
     public const string Cash = "Efectivo";
     public const string Sinpe = "SINPE";
+    public const string Mixed = "Mixto";
 
-    public static readonly string[] All = [Cash, Sinpe];
+    public static readonly string[] All = [Cash, Sinpe, Mixed];
 }
-

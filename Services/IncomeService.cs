@@ -27,6 +27,8 @@ public sealed class IncomeService
                 p.Amount,
                 p.PaymentMethod,
                 p.Reference,
+                p.CashAmount,
+                p.SinpeAmount,
                 u.FullName AS Username
             FROM dbo.Payments p
             INNER JOIN dbo.ParkingSessions s ON s.SessionId = p.SessionId
@@ -55,6 +57,8 @@ public sealed class IncomeService
                 Amount = reader.GetDecimal(reader.GetOrdinal("Amount")),
                 PaymentMethod = reader.GetString(reader.GetOrdinal("PaymentMethod")),
                 Reference = reader.IsDBNull(reader.GetOrdinal("Reference")) ? null : reader.GetString(reader.GetOrdinal("Reference")),
+                CashAmount = reader.IsDBNull(reader.GetOrdinal("CashAmount")) ? null : reader.GetDecimal(reader.GetOrdinal("CashAmount")),
+                SinpeAmount = reader.IsDBNull(reader.GetOrdinal("SinpeAmount")) ? null : reader.GetDecimal(reader.GetOrdinal("SinpeAmount")),
                 Username = reader.GetString(reader.GetOrdinal("Username"))
             });
         }
@@ -69,10 +73,12 @@ public sealed class IncomeService
         connection.Open();
 
         using var command = connection.CreateCommand();
+        // COALESCE: los pagos anteriores a la función de pago mixto no tienen desglose guardado,
+        // por lo que se deriva de la forma de pago.
         command.CommandText = """
             SELECT
-                Cash = COALESCE(SUM(CASE WHEN PaymentMethod = N'Efectivo' THEN Amount ELSE 0 END), 0),
-                Sinpe = COALESCE(SUM(CASE WHEN PaymentMethod = N'SINPE' THEN Amount ELSE 0 END), 0),
+                Cash = COALESCE(SUM(COALESCE(CashAmount, CASE WHEN PaymentMethod = N'Efectivo' THEN Amount ELSE 0 END)), 0),
+                Sinpe = COALESCE(SUM(COALESCE(SinpeAmount, CASE WHEN PaymentMethod = N'SINPE' THEN Amount ELSE 0 END)), 0),
                 Cnt = COUNT(1)
             FROM dbo.Payments
             WHERE PaidAt >= @FromAt AND PaidAt <= @ToAt

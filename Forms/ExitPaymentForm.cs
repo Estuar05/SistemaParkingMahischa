@@ -5,18 +5,27 @@ using SistemaParkingMahischa.Services;
 namespace SistemaParkingMahischa.Forms;
 
 /// <summary>
-/// Diálogo de cobro al registrar la salida: permite agregar un monto extra (sobre-estadía),
-/// elegir la forma de pago (Efectivo / SINPE) y, en efectivo, indicar con cuánto paga el
-/// cliente para calcular el vuelto.
+/// Diálogo de cobro al registrar la salida: permite agregar un monto extra (sobre-estadía)
+/// y elegir la forma de pago (Efectivo / SINPE / Mixto). En efectivo calcula el vuelto;
+/// en mixto pide cuánto se paga con cada forma (deben sumar el total).
 /// </summary>
 public sealed class ExitPaymentForm : Form
 {
     private readonly decimal _baseAmount;
 
+    /// <summary>
+    /// Monto por tiempo mostrado al cajero (calculado al abrir la ventana). La salida se
+    /// registra con ESTE monto: es lo que el cliente ya pagó, aunque el cobro tarde unos
+    /// minutos y la estadía cruce otra fracción mientras la ventana está abierta.
+    /// </summary>
+    public decimal QuotedBaseAmount => _baseAmount;
+
     public decimal ExtraAmount { get; private set; }
     public string PaymentMethod { get; private set; } = Models.PaymentMethods.Cash;
     public string? Reference { get; private set; }
     public decimal? TenderedAmount { get; private set; }
+    public decimal? CashPortion { get; private set; }
+    public decimal? SinpePortion { get; private set; }
 
     public ExitPaymentForm(ParkingSession session)
     {
@@ -27,7 +36,7 @@ public sealed class ExitPaymentForm : Form
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(420, 528);
+        ClientSize = new Size(420, 590);
         BackColor = Color.White;
         Icon = BrandAssets.Icon;
         Font = new Font("Segoe UI", 10F);
@@ -88,7 +97,8 @@ public sealed class ExitPaymentForm : Form
 
         var lblMethodCaption = MakeCaption("Forma de pago", new Point(24, 252));
         var rbCash = new RadioButton { Text = "Efectivo", Checked = true, Location = new Point(24, 276), AutoSize = true, Font = new Font("Segoe UI", 11F, FontStyle.Bold) };
-        var rbSinpe = new RadioButton { Text = "SINPE", Location = new Point(160, 276), AutoSize = true, Font = new Font("Segoe UI", 11F, FontStyle.Bold) };
+        var rbSinpe = new RadioButton { Text = "SINPE", Location = new Point(146, 276), AutoSize = true, Font = new Font("Segoe UI", 11F, FontStyle.Bold) };
+        var rbMixed = new RadioButton { Text = "Mixto", Location = new Point(252, 276), AutoSize = true, Font = new Font("Segoe UI", 11F, FontStyle.Bold) };
 
         // Sección de efectivo (paga con / vuelto).
         var lblTenderCaption = MakeCaption("Paga con", new Point(24, 318));
@@ -112,7 +122,32 @@ public sealed class ExitPaymentForm : Form
             TextAlign = ContentAlignment.MiddleRight
         };
 
-        // Sección de SINPE (referencia).
+        // Sección de pago mixto (efectivo + SINPE): al digitar el efectivo, el SINPE se
+        // completa solo con lo que falta (y viceversa) para que siempre sumen el total.
+        var lblMixedCashCaption = MakeCaption("Pagado en efectivo", new Point(24, 318));
+        var txtMixedCash = new TextBox
+        {
+            TextAlign = HorizontalAlignment.Right,
+            BorderStyle = BorderStyle.FixedSingle,
+            Font = new Font("Segoe UI", 12F),
+            Location = new Point(220, 314),
+            Width = 176,
+            Visible = false
+        };
+        var lblMixedSinpeCaption = MakeCaption("Pagado por SINPE", new Point(24, 358));
+        var txtMixedSinpe = new TextBox
+        {
+            TextAlign = HorizontalAlignment.Right,
+            BorderStyle = BorderStyle.FixedSingle,
+            Font = new Font("Segoe UI", 12F),
+            Location = new Point(220, 354),
+            Width = 176,
+            Visible = false
+        };
+        lblMixedCashCaption.Visible = false;
+        lblMixedSinpeCaption.Visible = false;
+
+        // Sección de SINPE (referencia): también visible en el pago mixto.
         var lblRefCaption = MakeCaption("Referencia / comprobante (opcional)", new Point(24, 318));
         var txtReference = new TextBox
         {
@@ -124,15 +159,17 @@ public sealed class ExitPaymentForm : Form
         };
         lblRefCaption.Visible = false;
 
-        var btnConfirm = MakeButton("Cobrar y registrar salida", new Point(24, 408), primary: true);
+        var btnConfirm = MakeButton("Cobrar y registrar salida", new Point(24, 470), primary: true);
         btnConfirm.Size = new Size(372, 48);
         btnConfirm.BackColor = Color.FromArgb(22, 163, 74);
-        var btnCancel = MakeButton("Cancelar", new Point(24, 468), primary: false);
+        var btnCancel = MakeButton("Cancelar", new Point(24, 528), primary: false);
         btnCancel.Size = new Size(372, 40);
         btnCancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
 
         decimal Extra() => TryParse(txtExtra.Text, out var v) ? v : 0m;
         decimal Total() => _baseAmount + Extra();
+
+        var syncingMixed = false;
 
         void RefreshTotals()
         {
@@ -151,22 +188,69 @@ public sealed class ExitPaymentForm : Form
             }
         }
 
+        void SyncMixed(TextBox edited, TextBox other)
+        {
+            if (syncingMixed)
+            {
+                return;
+            }
+
+            syncingMixed = true;
+            try
+            {
+                var value = TryParse(edited.Text, out var v) && edited.Text.Trim().Length > 0 ? v : 0m;
+                var remaining = Total() - value;
+                other.Text = remaining > 0 ? remaining.ToString("0") : "0";
+            }
+            finally
+            {
+                syncingMixed = false;
+            }
+        }
+
         void ApplyMethod()
         {
             var cash = rbCash.Checked;
+            var sinpe = rbSinpe.Checked;
+            var mixed = rbMixed.Checked;
             lblTenderCaption.Visible = cash;
             txtTender.Visible = cash;
             lblChangeCaption.Visible = cash;
             lblChange.Visible = cash;
-            lblRefCaption.Visible = !cash;
-            txtReference.Visible = !cash;
+            lblMixedCashCaption.Visible = mixed;
+            txtMixedCash.Visible = mixed;
+            lblMixedSinpeCaption.Visible = mixed;
+            txtMixedSinpe.Visible = mixed;
+            lblRefCaption.Visible = sinpe || mixed;
+            txtReference.Visible = sinpe || mixed;
+            if (sinpe)
+            {
+                lblRefCaption.Location = new Point(24, 318);
+                txtReference.Location = new Point(24, 342);
+            }
+            else if (mixed)
+            {
+                lblRefCaption.Location = new Point(24, 398);
+                txtReference.Location = new Point(24, 422);
+            }
+
             RefreshTotals();
         }
 
-        txtExtra.TextChanged += (_, _) => RefreshTotals();
+        txtExtra.TextChanged += (_, _) =>
+        {
+            RefreshTotals();
+            if (rbMixed.Checked)
+            {
+                SyncMixed(txtMixedCash, txtMixedSinpe);
+            }
+        };
         txtTender.TextChanged += (_, _) => RefreshTotals();
+        txtMixedCash.TextChanged += (_, _) => SyncMixed(txtMixedCash, txtMixedSinpe);
+        txtMixedSinpe.TextChanged += (_, _) => SyncMixed(txtMixedSinpe, txtMixedCash);
         rbCash.CheckedChanged += (_, _) => ApplyMethod();
         rbSinpe.CheckedChanged += (_, _) => ApplyMethod();
+        rbMixed.CheckedChanged += (_, _) => ApplyMethod();
 
         btnConfirm.Click += (_, _) =>
         {
@@ -194,9 +278,34 @@ public sealed class ExitPaymentForm : Form
                 TenderedAmount = tendered;
             }
 
+            if (rbMixed.Checked)
+            {
+                if (!TryParse(txtMixedCash.Text, out var cashPart) || cashPart < 0
+                    || !TryParse(txtMixedSinpe.Text, out var sinpePart) || sinpePart < 0)
+                {
+                    MessageBox.Show("Digite montos válidos de efectivo y SINPE.", "Cobro", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (cashPart + sinpePart != total)
+                {
+                    MessageBox.Show(
+                        $"Efectivo + SINPE debe sumar exactamente el total a cobrar ({MoneyHelper.Format(total)}).",
+                        "Cobro",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return;
+                }
+
+                CashPortion = cashPart;
+                SinpePortion = sinpePart;
+            }
+
             ExtraAmount = extra;
-            PaymentMethod = rbCash.Checked ? Models.PaymentMethods.Cash : Models.PaymentMethods.Sinpe;
-            Reference = rbSinpe.Checked && txtReference.Text.Trim().Length > 0 ? txtReference.Text.Trim() : null;
+            PaymentMethod = rbCash.Checked
+                ? Models.PaymentMethods.Cash
+                : rbSinpe.Checked ? Models.PaymentMethods.Sinpe : Models.PaymentMethods.Mixed;
+            Reference = !rbCash.Checked && txtReference.Text.Trim().Length > 0 ? txtReference.Text.Trim() : null;
             DialogResult = DialogResult.OK;
             Close();
         };
@@ -207,8 +316,9 @@ public sealed class ExitPaymentForm : Form
             lblBaseCaption, lblBase,
             lblExtraCaption, txtExtra,
             lblTotalCaption, lblTotal,
-            lblMethodCaption, rbCash, rbSinpe,
+            lblMethodCaption, rbCash, rbSinpe, rbMixed,
             lblTenderCaption, txtTender, lblChangeCaption, lblChange,
+            lblMixedCashCaption, txtMixedCash, lblMixedSinpeCaption, txtMixedSinpe,
             lblRefCaption, txtReference,
             btnConfirm, btnCancel
         ]);

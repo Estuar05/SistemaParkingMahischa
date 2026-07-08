@@ -185,14 +185,17 @@ public sealed class ParkingService
         decimal extraAmount = 0m,
         string paymentMethod = PaymentMethods.Cash,
         string? reference = null,
-        decimal? tenderedAmount = null)
+        decimal? tenderedAmount = null,
+        decimal? cashPortion = null,
+        decimal? sinpePortion = null,
+        decimal? quotedBaseAmount = null)
     {
         if (extraAmount < 0)
         {
             throw new InvalidOperationException("El monto extra no puede ser negativo.");
         }
 
-        if (paymentMethod != PaymentMethods.Cash && paymentMethod != PaymentMethods.Sinpe)
+        if (!PaymentMethods.All.Contains(paymentMethod))
         {
             paymentMethod = PaymentMethods.Cash;
         }
@@ -226,7 +229,12 @@ public sealed class ParkingService
             }
 
             var exitAt = DateTime.Now;
-            var baseAmount = CalculateAmount(session, exitAt);
+            // El monto por tiempo se congela con lo que la ventana de cobro le mostró al
+            // cajero (lo que el cliente pagó). Si se recalculara aquí, los minutos que tarda
+            // el cobro podrían cruzar otra fracción y guardar/imprimir un monto mayor al cobrado.
+            var baseAmount = quotedBaseAmount is { } quoted && quoted >= 0
+                ? quoted
+                : CalculateAmount(session, exitAt);
             var amount = baseAmount + extraAmount;
 
             decimal? changeAmount = null;
@@ -238,6 +246,27 @@ public sealed class ParkingService
                 }
 
                 changeAmount = tendered - amount;
+            }
+
+            // Desglose por forma de pago: en pagos puros se deriva del total; en el pago mixto
+            // las dos partes las digita el cajero y deben sumar exactamente el total.
+            var (cashAmount, sinpeAmount) = paymentMethod switch
+            {
+                PaymentMethods.Cash => (amount, 0m),
+                PaymentMethods.Sinpe => (0m, amount),
+                _ => (cashPortion ?? 0m, sinpePortion ?? 0m)
+            };
+            if (paymentMethod == PaymentMethods.Mixed)
+            {
+                if (cashAmount < 0 || sinpeAmount < 0)
+                {
+                    throw new InvalidOperationException("Los montos del pago mixto no pueden ser negativos.");
+                }
+
+                if (cashAmount + sinpeAmount != amount)
+                {
+                    throw new InvalidOperationException("En el pago mixto, efectivo + SINPE debe sumar exactamente el total a cobrar.");
+                }
             }
 
             using (var update = connection.CreateCommand())
@@ -267,8 +296,8 @@ public sealed class ParkingService
             {
                 payment.Transaction = transaction;
                 payment.CommandText = """
-                    INSERT INTO dbo.Payments(SessionId, Amount, PaidAt, UserId, PaymentMethod, Reference, TenderedAmount, ChangeAmount)
-                    VALUES (@SessionId, @Amount, @PaidAt, @UserId, @PaymentMethod, @Reference, @Tendered, @Change);
+                    INSERT INTO dbo.Payments(SessionId, Amount, PaidAt, UserId, PaymentMethod, Reference, TenderedAmount, ChangeAmount, CashAmount, SinpeAmount)
+                    VALUES (@SessionId, @Amount, @PaidAt, @UserId, @PaymentMethod, @Reference, @Tendered, @Change, @CashAmount, @SinpeAmount);
                     """;
                 payment.Parameters.AddWithValue("@SessionId", sessionId);
                 payment.Parameters.AddWithValue("@Amount", amount);
@@ -278,12 +307,15 @@ public sealed class ParkingService
                 payment.Parameters.AddWithValue("@Reference", (object?)reference ?? DBNull.Value);
                 payment.Parameters.AddWithValue("@Tendered", (object?)tenderedAmount ?? DBNull.Value);
                 payment.Parameters.AddWithValue("@Change", (object?)changeAmount ?? DBNull.Value);
+                payment.Parameters.AddWithValue("@CashAmount", cashAmount);
+                payment.Parameters.AddWithValue("@SinpeAmount", sinpeAmount);
                 payment.ExecuteNonQuery();
             }
 
             transaction.Commit();
             AuditService.Log(userId, "RegistrarSalida", "ParkingSessions", sessionId.ToString(),
-                $"Placa {session.Plate}, cobro {amount:0.00} ({paymentMethod}), extra {extraAmount:0.00}");
+                $"Placa {session.Plate}, cobro {amount:0.00} ({paymentMethod}), extra {extraAmount:0.00}"
+                + (paymentMethod == PaymentMethods.Mixed ? $", efectivo {cashAmount:0.00}, SINPE {sinpeAmount:0.00}" : string.Empty));
             return GetSessionById(sessionId) ?? throw new InvalidOperationException("No se pudo leer la salida registrada.");
         }
         catch
@@ -291,6 +323,46 @@ public sealed class ParkingService
             transaction.Rollback();
             throw;
         }
+    }
+
+    /// <summary>Obtiene el pago registrado de una estadía (para reimprimir el comprobante).</summary>
+    public Payment? GetPaymentBySession(long sessionId)
+    {
+        using var connection = SqlDatabase.CreateConnection();
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT p.PaymentId, p.SessionId, p.Amount, p.PaidAt, p.UserId, p.PaymentMethod,
+                   p.Reference, p.TenderedAmount, p.ChangeAmount, p.CashAmount, p.SinpeAmount,
+                   u.FullName AS Username
+            FROM dbo.Payments p
+            INNER JOIN dbo.Users u ON u.UserId = p.UserId
+            WHERE p.SessionId = @SessionId;
+            """;
+        command.Parameters.AddWithValue("@SessionId", sessionId);
+
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            return null;
+        }
+
+        return new Payment
+        {
+            PaymentId = reader.GetInt64(reader.GetOrdinal("PaymentId")),
+            SessionId = reader.GetInt64(reader.GetOrdinal("SessionId")),
+            Amount = reader.GetDecimal(reader.GetOrdinal("Amount")),
+            PaidAt = reader.GetDateTime(reader.GetOrdinal("PaidAt")),
+            UserId = reader.GetInt32(reader.GetOrdinal("UserId")),
+            PaymentMethod = reader.GetString(reader.GetOrdinal("PaymentMethod")),
+            Reference = reader.IsDBNull(reader.GetOrdinal("Reference")) ? null : reader.GetString(reader.GetOrdinal("Reference")),
+            TenderedAmount = GetNullableDecimal(reader, "TenderedAmount"),
+            ChangeAmount = GetNullableDecimal(reader, "ChangeAmount"),
+            CashAmount = GetNullableDecimal(reader, "CashAmount"),
+            SinpeAmount = GetNullableDecimal(reader, "SinpeAmount"),
+            Username = reader.GetString(reader.GetOrdinal("Username"))
+        };
     }
 
     /// <summary>Aplica una tarifa personalizada (solo para esta estadía) a una sesión activa.</summary>

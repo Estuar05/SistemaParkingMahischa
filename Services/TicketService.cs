@@ -7,6 +7,14 @@ namespace SistemaParkingMahischa.Services;
 
 public sealed class TicketService
 {
+    // Impresora de tiquetes EPSON TM-T88V con rollo de 80 mm: el papel mide 80 mm de ancho
+    // (315 centésimas de pulgada) con un área imprimible de ~72 mm (283 centésimas).
+    // El largo de la página se calcula midiendo el contenido, para que el corte automático
+    // quede justo al final del tiquete.
+    private const int RollPaperWidth = 315;
+    private const int RollMargin = 8;
+    private const int RollContentWidth = 267;
+
     public Image GenerateQr(Guid ticketCode, int pixelsPerModule = 8)
     {
         using var generator = new QRCodeGenerator();
@@ -19,43 +27,40 @@ public sealed class TicketService
         return Image.FromStream(stream);
     }
 
-    public void PrintTicket(ParkingSession session)
-    {
-        using var document = new PrintDocument();
-        document.DocumentName = $"Tiquete {session.Plate}";
-        document.PrintPage += (_, e) =>
-        {
-            if (e.Graphics is not null)
-            {
-                DrawTicket(e.Graphics, session, new Rectangle(12, 12, 280, 420));
-            }
-        };
-        document.Print();
-    }
+    public void PrintTicket(ParkingSession session) =>
+        PrintRollDocument($"Tiquete {session.Plate}", (graphics, bounds) => DrawTicket(graphics, session, bounds));
 
-    public void PrintReceipt(ExitReceipt receipt)
-    {
-        using var document = new PrintDocument();
-        document.DocumentName = $"Comprobante {receipt.Plate}";
-        document.PrintPage += (_, e) =>
-        {
-            if (e.Graphics is not null)
-            {
-                DrawReceipt(e.Graphics, receipt, new Rectangle(12, 12, 280, 460));
-            }
-        };
-        document.Print();
-    }
+    public void PrintReceipt(ExitReceipt receipt) =>
+        PrintRollDocument($"Comprobante {receipt.Plate}", (graphics, bounds) => DrawReceipt(graphics, receipt, bounds));
 
-    public void PrintClosureTicket(ClosureHistoryRecord record)
+    public void PrintClosureTicket(ClosureHistoryRecord record) =>
+        PrintRollDocument(record.DisplayName, (graphics, bounds) => DrawClosureTicket(graphics, record, bounds));
+
+    /// <summary>
+    /// Imprime en el rollo de 80 mm: primero mide el contenido en un lienzo con la misma
+    /// escala del impresor (centésimas de pulgada) y luego fija el tamaño de página al
+    /// largo exacto, de modo que la TM-T88V alimente y corte justo donde termina el tiquete.
+    /// </summary>
+    private static void PrintRollDocument(string documentName, Func<Graphics, Rectangle, int> draw)
     {
+        int contentBottom;
+        using (var canvas = new Bitmap(RollPaperWidth, 4))
+        {
+            canvas.SetResolution(100f, 100f);
+            using var measure = Graphics.FromImage(canvas);
+            contentBottom = draw(measure, new Rectangle(RollMargin, 10, RollContentWidth, 4000));
+        }
+
         using var document = new PrintDocument();
-        document.DocumentName = record.DisplayName;
+        document.DocumentName = documentName;
+        document.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
+        document.DefaultPageSettings.PaperSize = new PaperSize("Rollo 80 mm", RollPaperWidth, contentBottom + 20);
         document.PrintPage += (_, e) =>
         {
             if (e.Graphics is not null)
             {
-                DrawClosureTicket(e.Graphics, record, new Rectangle(12, 12, 280, 460));
+                draw(e.Graphics, new Rectangle(RollMargin, 10, RollContentWidth, contentBottom + 10));
+                e.HasMorePages = false;
             }
         };
         document.Print();
@@ -63,9 +68,9 @@ public sealed class TicketService
 
     /// <summary>
     /// Dibuja el tiquete de un cierre (empleado o caja) para entregarlo junto con el dinero.
-    /// Usa el mismo ancho y márgenes que el tiquete de entrada.
+    /// Devuelve la posición vertical donde terminó el contenido.
     /// </summary>
-    public void DrawClosureTicket(Graphics graphics, ClosureHistoryRecord record, Rectangle bounds)
+    public int DrawClosureTicket(Graphics graphics, ClosureHistoryRecord record, Rectangle bounds)
     {
         using var titleFont = new Font("Segoe UI", 14, FontStyle.Bold);
         using var subtitleFont = new Font("Segoe UI", 9.5f, FontStyle.Bold);
@@ -136,16 +141,20 @@ public sealed class TicketService
         y += 6;
         graphics.DrawLine(pen, bounds.Left, y, bounds.Right, y);
         y += 10;
-        graphics.DrawString("Entregue este tiquete junto con el dinero.", smallFont, mutedBrush,
-            new RectangleF(bounds.Left, y, bounds.Width, 30), centered);
+        var footer = "Entregue este tiquete junto con el dinero.";
+        var footerHeight = (int)Math.Ceiling(graphics.MeasureString(footer, smallFont, bounds.Width).Height);
+        graphics.DrawString(footer, smallFont, mutedBrush, new RectangleF(bounds.Left, y, bounds.Width, footerHeight + 4), centered);
+        return y + footerHeight + 8;
     }
 
-    /// <summary>Dibuja el comprobante de pago (al cobrar la salida).</summary>
-    public void DrawReceipt(Graphics graphics, ExitReceipt receipt, Rectangle bounds)
+    /// <summary>
+    /// Dibuja el comprobante de pago (al cobrar la salida). Devuelve la posición vertical
+    /// donde terminó el contenido.
+    /// </summary>
+    public int DrawReceipt(Graphics graphics, ExitReceipt receipt, Rectangle bounds)
     {
         using var titleFont = new Font("Segoe UI", 14, FontStyle.Bold);
         using var subtitleFont = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-        using var normalFont = new Font("Segoe UI", 10, FontStyle.Regular);
         using var smallFont = new Font("Segoe UI", 8, FontStyle.Regular);
         using var rowFont = new Font("Segoe UI", 8.5f, FontStyle.Regular);
         using var contactFont = new Font("Segoe UI", 8.5f, FontStyle.Regular);
@@ -162,7 +171,14 @@ public sealed class TicketService
         graphics.DrawString(AppSettings.BusinessName, titleFont, brush, new RectangleF(bounds.Left, y, bounds.Width, 30), centered);
         y += 30;
         graphics.DrawString("COMPROBANTE DE PAGO", subtitleFont, mutedBrush, new RectangleF(bounds.Left, y, bounds.Width, 20), centered);
-        y += 24;
+        y += 20;
+        if (receipt.IsReprint)
+        {
+            graphics.DrawString("*** REIMPRESIÓN ***", subtitleFont, mutedBrush, new RectangleF(bounds.Left, y, bounds.Width, 20), centered);
+            y += 20;
+        }
+
+        y += 4;
         graphics.DrawLine(pen, bounds.Left, y, bounds.Right, y);
         y += 12;
 
@@ -205,6 +221,15 @@ public sealed class TicketService
             Row("Paga con", tendered.ToString("C0"), rowFont, brush);
             Row("Vuelto", (receipt.ChangeAmount ?? 0m).ToString("C0"), rowFont, brush);
         }
+        else if (receipt.PaymentMethod == PaymentMethods.Mixed)
+        {
+            Row("Pagado en efectivo", (receipt.CashPortion ?? 0m).ToString("C0"), rowFont, brush);
+            Row("Pagado por SINPE", (receipt.SinpePortion ?? 0m).ToString("C0"), rowFont, brush);
+            if (!string.IsNullOrWhiteSpace(receipt.Reference))
+            {
+                Row("Referencia", receipt.Reference!, rowFont, brush);
+            }
+        }
         else if (receipt.PaymentMethod == PaymentMethods.Sinpe && !string.IsNullOrWhiteSpace(receipt.Reference))
         {
             Row("Referencia", receipt.Reference!, rowFont, brush);
@@ -218,8 +243,9 @@ public sealed class TicketService
 
         var message =
             $"Gracias por su preferencia. Cualquier consulta al {AppSettings.ContactPhone}.";
-        var messageRect = new RectangleF(bounds.Left, y, bounds.Width, Math.Max(0, bounds.Bottom - y));
-        graphics.DrawString(message, contactFont, mutedBrush, messageRect, centered);
+        var messageHeight = (int)Math.Ceiling(graphics.MeasureString(message, contactFont, bounds.Width).Height);
+        graphics.DrawString(message, contactFont, mutedBrush, new RectangleF(bounds.Left, y, bounds.Width, messageHeight + 4), centered);
+        return y + messageHeight + 8;
     }
 
     private static string FormatDuration(TimeSpan duration)
@@ -232,7 +258,10 @@ public sealed class TicketService
         return $"{(int)duration.TotalHours}h {duration.Minutes}m";
     }
 
-    public void DrawTicket(Graphics graphics, ParkingSession session, Rectangle bounds)
+    /// <summary>
+    /// Dibuja el tiquete de entrada. Devuelve la posición vertical donde terminó el contenido.
+    /// </summary>
+    public int DrawTicket(Graphics graphics, ParkingSession session, Rectangle bounds)
     {
         using var titleFont = new Font("Segoe UI", 14, FontStyle.Bold);
         using var normalFont = new Font("Segoe UI", 10, FontStyle.Regular);
@@ -260,7 +289,7 @@ public sealed class TicketService
         y += 24;
 
         using var qrImage = GenerateQr(session.TicketCode, 7);
-        graphics.DrawImage(qrImage, bounds.Left + 54, y, 150, 150);
+        graphics.DrawImage(qrImage, bounds.Left + ((bounds.Width - 150) / 2), y, 150, 150);
         y += 162;
         graphics.DrawLine(pen, bounds.Left, y, bounds.Right, y);
         y += 12;
@@ -269,7 +298,8 @@ public sealed class TicketService
 
         var message =
             $"Estimado cliente, si tiene alguna duda puede contactarse al {AppSettings.ContactPhone} para brindarle la mejor atención.";
-        var messageRect = new RectangleF(bounds.Left, y, bounds.Width, bounds.Bottom - y);
-        graphics.DrawString(message, contactFont, mutedBrush, messageRect, centered);
+        var messageHeight = (int)Math.Ceiling(graphics.MeasureString(message, contactFont, bounds.Width).Height);
+        graphics.DrawString(message, contactFont, mutedBrush, new RectangleF(bounds.Left, y, bounds.Width, messageHeight + 4), centered);
+        return y + messageHeight + 8;
     }
 }

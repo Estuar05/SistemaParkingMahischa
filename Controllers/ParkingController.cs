@@ -32,8 +32,13 @@ public sealed class ParkingController
         decimal extraAmount = 0m,
         string paymentMethod = PaymentMethods.Cash,
         string? reference = null,
-        decimal? tenderedAmount = null) =>
-        _parkingService.RegisterExit(sessionId, userId, extraAmount, paymentMethod, reference, tenderedAmount);
+        decimal? tenderedAmount = null,
+        decimal? cashPortion = null,
+        decimal? sinpePortion = null,
+        decimal? quotedBaseAmount = null) =>
+        _parkingService.RegisterExit(sessionId, userId, extraAmount, paymentMethod, reference, tenderedAmount, cashPortion, sinpePortion, quotedBaseAmount);
+
+    public Payment? GetPayment(long sessionId) => _parkingService.GetPaymentBySession(sessionId);
 
     public void SetCustomRate(long sessionId, string rateType, decimal amount, int graceMinutes, int? blockMinutes, decimal? blockAmount, string? note, int userId) =>
         _parkingService.SetCustomRate(sessionId, rateType, amount, graceMinutes, blockMinutes, blockAmount, note, userId);

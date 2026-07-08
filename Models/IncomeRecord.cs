@@ -11,6 +11,10 @@ public sealed class IncomeRecord
     public string PaymentMethod { get; set; } = PaymentMethods.Cash;
     public string? Reference { get; set; }
     public string Username { get; set; } = string.Empty;
+
+    /// <summary>Desglose del pago mixto (efectivo / SINPE); nulo en pagos anteriores a esta función.</summary>
+    public decimal? CashAmount { get; set; }
+    public decimal? SinpeAmount { get; set; }
 }
 
 /// <summary>Totales de ingresos desglosados por forma de pago.</summary>

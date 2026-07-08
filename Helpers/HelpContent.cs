@@ -47,21 +47,25 @@ public static class HelpContent
             FORMA RÁPIDA, con el escáner:
             1. Haga clic dentro del campo 'Código QR / ticket'.
             2. Escanee el QR del tiquete del cliente con el lector.
-            3. Se abre automáticamente una ventana con los datos del vehículo y el MONTO A COBRAR.
-            4. Cobre, presione 'Registrar salida' y confirme.
+            3. Se abre DIRECTAMENTE la ventana de COBRO con la placa y el monto.
+            4. Cobre y presione 'Cobrar y registrar salida': el comprobante se imprime solo.
+            (Si el vehículo YA PAGÓ, al escanear su QR se ofrece reimprimir el comprobante.)
 
             FORMA MANUAL, buscando la placa:
             1. Escriba la placa en 'Buscar por placa' y presione 'Buscar placa'.
             2. Haga clic en el vehículo en la lista.
-            3. Presione 'Registrar salida' y confirme.
+            3. Presione 'Registrar salida', cobre y confirme. El comprobante se imprime solo.
 
             ── AL COBRAR (ventana de cobro) ──
             Al registrar la salida se abre la ventana de COBRO:
             • MONTO EXTRA: si el cliente se pasó unos minutos, puede sumar un monto adicional.
-            • FORMA DE PAGO: elija 'Efectivo' o 'SINPE'.
+            • FORMA DE PAGO: elija 'Efectivo', 'SINPE' o 'Mixto' (una parte en efectivo y
+              otra por SINPE).
             • En EFECTIVO puede escribir con cuánto paga el cliente ('Paga con') y el sistema
               calcula automáticamente el VUELTO.
             • En SINPE puede anotar la referencia o comprobante (opcional).
+            • En MIXTO escriba cuánto paga en EFECTIVO: el resto se completa solo como SINPE
+              (las dos partes deben sumar el total).
 
             ── TARIFA PERSONALIZADA ──
             Para cobrar diferente a un cliente puntual: seleccione el vehículo y presione
@@ -69,7 +73,8 @@ public static class HelpContent
             Se aplica SOLO a esa estadía y queda registrada.
 
             ── OTRAS OPCIONES ──
-            • 'Reimprimir': vuelve a imprimir el tiquete del vehículo seleccionado.
+            • 'Reimprimir': si el vehículo sigue adentro, reimprime su tiquete de ENTRADA;
+              si ya pagó su salida, reimprime el COMPROBANTE DE PAGO.
             • 'Ocultar vehículos con salida': muestra solo los autos que siguen adentro.
 
             ── CÓMO COBRA LA TARIFA POR HORA ──
@@ -90,7 +95,9 @@ public static class HelpContent
 
             ── BUSCAR INGRESOS ──
             1. Elija el rango DESDE / HASTA.
-            2. (Opcional) Filtre por FORMA DE PAGO (Efectivo / SINPE) o por EMPLEADO.
+            2. (Opcional) Filtre por FORMA DE PAGO (Efectivo / SINPE / Mixto) o por EMPLEADO.
+               En los pagos MIXTOS, la parte en efectivo y la parte SINPE se suman a los
+               totales correspondientes.
             3. Presione 'Buscar'.
 
             Arriba se ven los TOTALES: efectivo, SINPE, total y cantidad de cobros.
@@ -154,34 +161,27 @@ public static class HelpContent
 
         ["Cierres"] =
             """
-            Aquí se hacen los CIERRES de caja y de empleados, y se consulta el historial.
+            Aquí se hace el CIERRE DEL DÍA y se consulta el historial.
 
             ═══ PESTAÑA 'REGISTRAR CIERRES' ═══
+            Presione el botón verde grande 'HACER EL CIERRE DEL DÍA' y siga los pasos:
 
-            ── CIERRE DE EMPLEADO (lado izquierdo) ──
-            Sirve para saber cuánto EFECTIVO debe entregar un empleado.
-            Todo se calcula SOLO: al elegir el empleado y el rango DESDE / HASTA, el sistema
-            muestra de inmediato el EFECTIVO esperado y, aparte, cuánto cobró por SINPE
-            (el SINPE no se entrega en físico).
-            1. Elija el EMPLEADO y el rango del turno.
-            2. Cuente los billetes y monedas ENTREGADOS y escriba la cantidad de cada uno
-               (solo con el teclado; escriba el número en la casilla).
-            3. Presione 'Cerrar empleado'. El sistema muestra si hay diferencia y le ofrece
-               IMPRIMIR EL TIQUETE del cierre para entregarlo junto con el dinero.
+            PASO 1 — ENTREGAR EL DINERO COBRADO (cierre de empleado):
+            Cuente el dinero cobrado en el turno (lo que va a entregar) y escriba la
+            cantidad de cada billete y moneda. El sistema muestra el EFECTIVO esperado y,
+            aparte, cuánto se cobró por SINPE (el SINPE no se entrega en físico).
+            Presione 'Continuar': el cierre se guarda y su tiquete se imprime solo.
 
-            ── CIERRE DE CAJA (lado derecho) ──
-            Sirve para cuadrar el FONDO DE CAJA al final del día. Lo cobrado del día NO cuenta
-            aquí: ese dinero se entrega con el cierre de empleado. En la caja solo debe quedar
-            el fondo (los ₡20 000 base).
+            PASO 2 — CONTAR EL FONDO DE LA CAJA (cierre de caja):
+            Cuente el dinero que QUEDA en la caja (el fondo para vueltos) y escriba las
+            cantidades. El sistema compara al instante:
+            • Cuadra: queda exactamente el fondo. Todo bien.
+            • Sobra: hay MÁS dinero que el fondo.
+            • Falta: hay MENOS dinero que el fondo.
+            Presione 'Finalizar cierre': se guarda y su tiquete se imprime solo. ¡Listo!
 
-            Pasos:
-            1. Cuente los billetes y monedas que quedan en la caja y escriba la cantidad de
-               cada uno.
-            2. El sistema suma el CONTADO y lo compara con el FONDO al instante:
-               • Cuadra: queda exactamente el fondo. Todo bien.
-               • Sobra: hay MÁS dinero que el fondo.
-               • Falta: hay MENOS dinero que el fondo.
-            3. Presione 'Cerrar caja' para guardar el cierre. También puede imprimir el tiquete.
+            Si el conteo no cuadra, el sistema avisa y pregunta si desea continuar.
+            Entregue cada tiquete impreso junto con el dinero.
 
             El administrador puede corregir el FONDO DE CAJA con el botón 'Cambiar fondo';
             el valor queda guardado en la base de datos para todas las computadoras.
