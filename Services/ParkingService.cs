@@ -188,8 +188,14 @@ public sealed class ParkingService
         decimal? tenderedAmount = null,
         decimal? cashPortion = null,
         decimal? sinpePortion = null,
-        decimal? quotedBaseAmount = null)
+        decimal? quotedBaseAmount = null,
+        int? chargedDays = null)
     {
+        if (chargedDays is < 1)
+        {
+            throw new InvalidOperationException("La cantidad de días debe ser 1 o mayor.");
+        }
+
         if (extraAmount < 0)
         {
             throw new InvalidOperationException("El monto extra no puede ser negativo.");
@@ -278,6 +284,7 @@ public sealed class ParkingService
                         ExitedByUserId = @UserId,
                         ChargedAmount = @Amount,
                         ExtraAmount = @ExtraAmount,
+                        ChargedDays = @ChargedDays,
                         Status = 'C'
                     WHERE SessionId = @SessionId AND Status = 'A';
                     """;
@@ -285,6 +292,7 @@ public sealed class ParkingService
                 update.Parameters.AddWithValue("@UserId", userId);
                 update.Parameters.AddWithValue("@Amount", amount);
                 update.Parameters.AddWithValue("@ExtraAmount", extraAmount);
+                update.Parameters.AddWithValue("@ChargedDays", (object?)chargedDays ?? DBNull.Value);
                 update.Parameters.AddWithValue("@SessionId", sessionId);
                 if (update.ExecuteNonQuery() != 1)
                 {
@@ -315,6 +323,7 @@ public sealed class ParkingService
             transaction.Commit();
             AuditService.Log(userId, "RegistrarSalida", "ParkingSessions", sessionId.ToString(),
                 $"Placa {session.Plate}, cobro {amount:0.00} ({paymentMethod}), extra {extraAmount:0.00}"
+                + (chargedDays is { } days ? $", por dia x{days}" : string.Empty)
                 + (paymentMethod == PaymentMethods.Mixed ? $", efectivo {cashAmount:0.00}, SINPE {sinpeAmount:0.00}" : string.Empty));
             return GetSessionById(sessionId) ?? throw new InvalidOperationException("No se pudo leer la salida registrada.");
         }
@@ -535,6 +544,7 @@ public sealed class ParkingService
             s.Status,
             s.ChargedAmount,
             s.ExtraAmount,
+            s.ChargedDays,
             s.CustomRateType,
             s.CustomRateAmount,
             s.CustomGraceMinutes,
@@ -569,6 +579,7 @@ public sealed class ParkingService
         Status = reader.GetString(reader.GetOrdinal("Status")),
         ChargedAmount = GetNullableDecimal(reader, "ChargedAmount"),
         ExtraAmount = GetNullableDecimal(reader, "ExtraAmount"),
+        ChargedDays = GetNullableInt(reader, "ChargedDays"),
         CustomRateType = reader.IsDBNull(reader.GetOrdinal("CustomRateType")) ? null : reader.GetString(reader.GetOrdinal("CustomRateType")),
         CustomRateAmount = GetNullableDecimal(reader, "CustomRateAmount"),
         CustomGraceMinutes = GetNullableInt(reader, "CustomGraceMinutes"),

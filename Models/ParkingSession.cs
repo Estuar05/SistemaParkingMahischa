@@ -21,6 +21,9 @@ public sealed class ParkingSession
     public decimal? ChargedAmount { get; set; }
     public decimal? ExtraAmount { get; set; }
 
+    /// <summary>Cantidad de días cobrados cuando el cajero eligió "cobrar por día" (₡3 000 c/u).</summary>
+    public int? ChargedDays { get; set; }
+
     // Tarifa personalizada para esta estadía (no se guarda como tarifa global).
     public string? CustomRateType { get; set; }
     public decimal? CustomRateAmount { get; set; }

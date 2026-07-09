@@ -5,20 +5,23 @@ using SistemaParkingMahischa.Services;
 namespace SistemaParkingMahischa.Forms;
 
 /// <summary>
-/// Diálogo de cobro al registrar la salida: permite agregar un monto extra (sobre-estadía)
-/// y elegir la forma de pago (Efectivo / SINPE / Mixto). En efectivo calcula el vuelto;
-/// en mixto pide cuánto se paga con cada forma (deben sumar el total).
+/// Diálogo de cobro al registrar la salida. Muestra el tiempo que estuvo el vehículo (para
+/// verificar el monto), permite cobrar por día (cantidad de días x precio del día) en lugar
+/// del cálculo por hora, agregar un monto extra, y elegir la forma de pago
+/// (Efectivo / SINPE / Mixto). La impresión del comprobante es opcional.
 /// </summary>
 public sealed class ExitPaymentForm : Form
 {
-    private readonly decimal _baseAmount;
+    private const decimal DefaultDayPrice = 3000m;
+
+    private readonly decimal _hourlyAmount;
+    private readonly decimal _dayPrice;
 
     /// <summary>
-    /// Monto por tiempo mostrado al cajero (calculado al abrir la ventana). La salida se
-    /// registra con ESTE monto: es lo que el cliente ya pagó, aunque el cobro tarde unos
-    /// minutos y la estadía cruce otra fracción mientras la ventana está abierta.
+    /// Monto por tiempo con el que se registra la salida (lo que se le mostró al cajero):
+    /// el cálculo por hora, o días x precio del día si eligió cobrar por día.
     /// </summary>
-    public decimal QuotedBaseAmount => _baseAmount;
+    public decimal QuotedBaseAmount { get; private set; }
 
     public decimal ExtraAmount { get; private set; }
     public string PaymentMethod { get; private set; } = Models.PaymentMethods.Cash;
@@ -27,16 +30,23 @@ public sealed class ExitPaymentForm : Form
     public decimal? CashPortion { get; private set; }
     public decimal? SinpePortion { get; private set; }
 
+    /// <summary>Cantidad de días cobrados si el cajero eligió "cobrar por día"; null si fue por hora.</summary>
+    public int? ChargedDays { get; private set; }
+
+    /// <summary>Indica si el cajero pidió imprimir el comprobante (no todos los clientes lo quieren).</summary>
+    public bool PrintReceiptRequested { get; private set; }
+
     public ExitPaymentForm(ParkingSession session)
     {
-        _baseAmount = ParkingService.CalculateAmount(session, DateTime.Now);
+        _hourlyAmount = ParkingService.CalculateAmount(session, DateTime.Now);
+        _dayPrice = session.EffectiveBlockAmount is { } block && block > 0 ? block : DefaultDayPrice;
 
         Text = "Cobro de salida";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(420, 590);
+        ClientSize = new Size(420, 672);
         BackColor = Color.White;
         Icon = BrandAssets.Icon;
         Font = new Font("Segoe UI", 10F);
@@ -60,87 +70,127 @@ public sealed class ExitPaymentForm : Form
             Text = $"Entrada: {session.EntryAt:dd/MM/yyyy HH:mm}\nTarifa: {(session.HasCustomRate ? "Personalizada" : session.RateName)}"
         };
 
-        var lblBaseCaption = MakeCaption("Monto por tiempo", new Point(24, 130));
+        // Tiempo estacionado bien visible: sirve para verificar que el monto calculado
+        // coincide con las horas reales del vehículo.
+        var lblTime = new Label
+        {
+            Text = $"Tiempo: {FormatDuration(DateTime.Now - session.EntryAt)}",
+            Font = new Font("Segoe UI", 11.5F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(36, 99, 235),
+            Location = new Point(24, 124),
+            Size = new Size(372, 26)
+        };
+
+        var lblBaseCaption = MakeCaption("Monto por tiempo", new Point(24, 160));
         var lblBase = new Label
         {
-            Text = MoneyHelper.Format(_baseAmount),
+            Text = MoneyHelper.Format(_hourlyAmount),
             Font = new Font("Segoe UI", 14F, FontStyle.Bold),
             ForeColor = Color.FromArgb(15, 23, 42),
-            Location = new Point(220, 124),
+            Location = new Point(220, 154),
             Size = new Size(176, 28),
             TextAlign = ContentAlignment.MiddleRight
         };
 
-        var lblExtraCaption = MakeCaption("Monto extra (sobre-estadía)", new Point(24, 166));
+        // Cobro por día: reemplaza el cálculo por hora por días x precio del día.
+        var chkDay = new CheckBox
+        {
+            Text = $"Cobrar por día ({MoneyHelper.Format(_dayPrice)} c/u)",
+            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(30, 41, 59),
+            Location = new Point(24, 194),
+            AutoSize = true
+        };
+        var lblDaysCaption = MakeCaption("Días", new Point(268, 196));
+        var txtDays = new TextBox
+        {
+            Text = "1",
+            TextAlign = HorizontalAlignment.Center,
+            BorderStyle = BorderStyle.FixedSingle,
+            Font = new Font("Segoe UI", 12F),
+            Location = new Point(312, 190),
+            Width = 84,
+            Enabled = false
+        };
+        lblDaysCaption.Visible = false;
+        txtDays.KeyPress += (_, e) =>
+        {
+            if (!char.IsControl(e.KeyChar) && !char.IsDigit(e.KeyChar))
+            {
+                e.Handled = true;
+            }
+        };
+
+        var lblExtraCaption = MakeCaption("Monto extra (sobre-estadía)", new Point(24, 234));
         var txtExtra = new TextBox
         {
             Text = "0",
             TextAlign = HorizontalAlignment.Right,
             BorderStyle = BorderStyle.FixedSingle,
             Font = new Font("Segoe UI", 12F),
-            Location = new Point(220, 162),
+            Location = new Point(220, 230),
             Width = 176
         };
 
-        var lblTotalCaption = MakeCaption("Total a cobrar", new Point(24, 208));
+        var lblTotalCaption = MakeCaption("Total a cobrar", new Point(24, 276));
         lblTotalCaption.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
         lblTotalCaption.ForeColor = Color.FromArgb(22, 163, 74);
         var lblTotal = new Label
         {
-            Text = MoneyHelper.Format(_baseAmount),
+            Text = MoneyHelper.Format(_hourlyAmount),
             Font = new Font("Segoe UI", 20F, FontStyle.Bold),
             ForeColor = Color.FromArgb(22, 163, 74),
-            Location = new Point(170, 200),
+            Location = new Point(170, 268),
             Size = new Size(226, 34),
             TextAlign = ContentAlignment.MiddleRight
         };
 
-        var lblMethodCaption = MakeCaption("Forma de pago", new Point(24, 252));
-        var rbCash = new RadioButton { Text = "Efectivo", Checked = true, Location = new Point(24, 276), AutoSize = true, Font = new Font("Segoe UI", 11F, FontStyle.Bold) };
-        var rbSinpe = new RadioButton { Text = "SINPE", Location = new Point(146, 276), AutoSize = true, Font = new Font("Segoe UI", 11F, FontStyle.Bold) };
-        var rbMixed = new RadioButton { Text = "Mixto", Location = new Point(252, 276), AutoSize = true, Font = new Font("Segoe UI", 11F, FontStyle.Bold) };
+        var lblMethodCaption = MakeCaption("Forma de pago", new Point(24, 318));
+        var rbCash = new RadioButton { Text = "Efectivo", Checked = true, Location = new Point(24, 342), AutoSize = true, Font = new Font("Segoe UI", 11F, FontStyle.Bold) };
+        var rbSinpe = new RadioButton { Text = "SINPE", Location = new Point(146, 342), AutoSize = true, Font = new Font("Segoe UI", 11F, FontStyle.Bold) };
+        var rbMixed = new RadioButton { Text = "Mixto", Location = new Point(252, 342), AutoSize = true, Font = new Font("Segoe UI", 11F, FontStyle.Bold) };
 
         // Sección de efectivo (paga con / vuelto).
-        var lblTenderCaption = MakeCaption("Paga con", new Point(24, 318));
+        var lblTenderCaption = MakeCaption("Paga con", new Point(24, 384));
         var txtTender = new TextBox
         {
             Text = string.Empty,
             TextAlign = HorizontalAlignment.Right,
             BorderStyle = BorderStyle.FixedSingle,
             Font = new Font("Segoe UI", 12F),
-            Location = new Point(220, 314),
+            Location = new Point(220, 380),
             Width = 176
         };
-        var lblChangeCaption = MakeCaption("Vuelto", new Point(24, 358));
+        var lblChangeCaption = MakeCaption("Vuelto", new Point(24, 424));
         var lblChange = new Label
         {
             Text = "₡0",
             Font = new Font("Segoe UI", 16F, FontStyle.Bold),
             ForeColor = Color.FromArgb(202, 138, 4),
-            Location = new Point(170, 352),
+            Location = new Point(170, 418),
             Size = new Size(226, 30),
             TextAlign = ContentAlignment.MiddleRight
         };
 
         // Sección de pago mixto (efectivo + SINPE): al digitar el efectivo, el SINPE se
         // completa solo con lo que falta (y viceversa) para que siempre sumen el total.
-        var lblMixedCashCaption = MakeCaption("Pagado en efectivo", new Point(24, 318));
+        var lblMixedCashCaption = MakeCaption("Pagado en efectivo", new Point(24, 384));
         var txtMixedCash = new TextBox
         {
             TextAlign = HorizontalAlignment.Right,
             BorderStyle = BorderStyle.FixedSingle,
             Font = new Font("Segoe UI", 12F),
-            Location = new Point(220, 314),
+            Location = new Point(220, 380),
             Width = 176,
             Visible = false
         };
-        var lblMixedSinpeCaption = MakeCaption("Pagado por SINPE", new Point(24, 358));
+        var lblMixedSinpeCaption = MakeCaption("Pagado por SINPE", new Point(24, 424));
         var txtMixedSinpe = new TextBox
         {
             TextAlign = HorizontalAlignment.Right,
             BorderStyle = BorderStyle.FixedSingle,
             Font = new Font("Segoe UI", 12F),
-            Location = new Point(220, 354),
+            Location = new Point(220, 420),
             Width = 176,
             Visible = false
         };
@@ -148,31 +198,46 @@ public sealed class ExitPaymentForm : Form
         lblMixedSinpeCaption.Visible = false;
 
         // Sección de SINPE (referencia): también visible en el pago mixto.
-        var lblRefCaption = MakeCaption("Referencia / comprobante (opcional)", new Point(24, 318));
+        var lblRefCaption = MakeCaption("Referencia / comprobante (opcional)", new Point(24, 384));
         var txtReference = new TextBox
         {
             BorderStyle = BorderStyle.FixedSingle,
             Font = new Font("Segoe UI", 11F),
-            Location = new Point(24, 342),
+            Location = new Point(24, 408),
             Width = 372,
             Visible = false
         };
         lblRefCaption.Visible = false;
 
-        var btnConfirm = MakeButton("Cobrar y registrar salida", new Point(24, 470), primary: true);
+        // El comprobante solo se imprime si el cliente lo pide.
+        var chkPrint = new CheckBox
+        {
+            Text = "Imprimir comprobante de pago (si el cliente lo pide)",
+            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(30, 41, 59),
+            Location = new Point(24, 528),
+            AutoSize = true,
+            Checked = false
+        };
+
+        var btnConfirm = MakeButton("Cobrar y registrar salida", new Point(24, 560), primary: true);
         btnConfirm.Size = new Size(372, 48);
         btnConfirm.BackColor = Color.FromArgb(22, 163, 74);
-        var btnCancel = MakeButton("Cancelar", new Point(24, 528), primary: false);
+        var btnCancel = MakeButton("Cancelar", new Point(24, 618), primary: false);
         btnCancel.Size = new Size(372, 40);
         btnCancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
 
+        int Days() => int.TryParse(txtDays.Text, out var d) && d > 0 ? d : 0;
+        decimal BaseAmount() => chkDay.Checked ? Days() * _dayPrice : _hourlyAmount;
         decimal Extra() => TryParse(txtExtra.Text, out var v) ? v : 0m;
-        decimal Total() => _baseAmount + Extra();
+        decimal Total() => BaseAmount() + Extra();
 
         var syncingMixed = false;
 
         void RefreshTotals()
         {
+            lblBaseCaption.Text = chkDay.Checked ? $"Monto por día ({Math.Max(1, Days())} x {MoneyHelper.Format(_dayPrice)})" : "Monto por tiempo";
+            lblBase.Text = MoneyHelper.Format(BaseAmount());
             var total = Total();
             lblTotal.Text = MoneyHelper.Format(total);
             if (rbCash.Checked && TryParse(txtTender.Text, out var tendered) && txtTender.Text.Trim().Length > 0)
@@ -208,6 +273,15 @@ public sealed class ExitPaymentForm : Form
             }
         }
 
+        void OnAmountChanged()
+        {
+            RefreshTotals();
+            if (rbMixed.Checked)
+            {
+                SyncMixed(txtMixedCash, txtMixedSinpe);
+            }
+        }
+
         void ApplyMethod()
         {
             var cash = rbCash.Checked;
@@ -225,26 +299,32 @@ public sealed class ExitPaymentForm : Form
             txtReference.Visible = sinpe || mixed;
             if (sinpe)
             {
-                lblRefCaption.Location = new Point(24, 318);
-                txtReference.Location = new Point(24, 342);
+                lblRefCaption.Location = new Point(24, 384);
+                txtReference.Location = new Point(24, 408);
             }
             else if (mixed)
             {
-                lblRefCaption.Location = new Point(24, 398);
-                txtReference.Location = new Point(24, 422);
+                lblRefCaption.Location = new Point(24, 462);
+                txtReference.Location = new Point(24, 486);
             }
 
             RefreshTotals();
         }
 
-        txtExtra.TextChanged += (_, _) =>
+        chkDay.CheckedChanged += (_, _) =>
         {
-            RefreshTotals();
-            if (rbMixed.Checked)
+            txtDays.Enabled = chkDay.Checked;
+            lblDaysCaption.Visible = chkDay.Checked;
+            if (chkDay.Checked)
             {
-                SyncMixed(txtMixedCash, txtMixedSinpe);
+                txtDays.Focus();
+                txtDays.SelectAll();
             }
+
+            OnAmountChanged();
         };
+        txtDays.TextChanged += (_, _) => OnAmountChanged();
+        txtExtra.TextChanged += (_, _) => OnAmountChanged();
         txtTender.TextChanged += (_, _) => RefreshTotals();
         txtMixedCash.TextChanged += (_, _) => SyncMixed(txtMixedCash, txtMixedSinpe);
         txtMixedSinpe.TextChanged += (_, _) => SyncMixed(txtMixedSinpe, txtMixedCash);
@@ -254,13 +334,19 @@ public sealed class ExitPaymentForm : Form
 
         btnConfirm.Click += (_, _) =>
         {
+            if (chkDay.Checked && Days() < 1)
+            {
+                MessageBox.Show("Digite la cantidad de días (1 o mayor).", "Cobro", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             if (!TryParse(txtExtra.Text, out var extra) || extra < 0)
             {
                 MessageBox.Show("Digite un monto extra válido (0 o mayor).", "Cobro", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            var total = _baseAmount + extra;
+            var total = BaseAmount() + extra;
             if (rbCash.Checked && txtTender.Text.Trim().Length > 0)
             {
                 if (!TryParse(txtTender.Text, out var tendered) || tendered < 0)
@@ -301,30 +387,46 @@ public sealed class ExitPaymentForm : Form
                 SinpePortion = sinpePart;
             }
 
+            QuotedBaseAmount = BaseAmount();
+            ChargedDays = chkDay.Checked ? Days() : null;
             ExtraAmount = extra;
             PaymentMethod = rbCash.Checked
                 ? Models.PaymentMethods.Cash
                 : rbSinpe.Checked ? Models.PaymentMethods.Sinpe : Models.PaymentMethods.Mixed;
             Reference = !rbCash.Checked && txtReference.Text.Trim().Length > 0 ? txtReference.Text.Trim() : null;
+            PrintReceiptRequested = chkPrint.Checked;
             DialogResult = DialogResult.OK;
             Close();
         };
 
         Controls.AddRange(
         [
-            accent, lblPlate, lblInfo,
+            accent, lblPlate, lblInfo, lblTime,
             lblBaseCaption, lblBase,
+            chkDay, lblDaysCaption, txtDays,
             lblExtraCaption, txtExtra,
             lblTotalCaption, lblTotal,
             lblMethodCaption, rbCash, rbSinpe, rbMixed,
             lblTenderCaption, txtTender, lblChangeCaption, lblChange,
             lblMixedCashCaption, txtMixedCash, lblMixedSinpeCaption, txtMixedSinpe,
             lblRefCaption, txtReference,
+            chkPrint,
             btnConfirm, btnCancel
         ]);
 
         AcceptButton = btnConfirm;
         ApplyMethod();
+    }
+
+    /// <summary>Tiempo estacionado; en estadías largas agrega el total de horas para verificar el cobro.</summary>
+    private static string FormatDuration(TimeSpan duration)
+    {
+        if (duration.TotalDays >= 1)
+        {
+            return $"{(int)duration.TotalDays}d {duration.Hours}h {duration.Minutes}m  ({(int)duration.TotalHours} horas en total)";
+        }
+
+        return $"{(int)duration.TotalHours}h {duration.Minutes}m";
     }
 
     private static Label MakeCaption(string text, Point location) => new()

@@ -496,7 +496,7 @@ public partial class MainForm : Form
                 Placa = s.Plate,
                 Entrada = s.EntryAt.ToString("dd/MM/yyyy HH:mm"),
                 Salida = s.ExitAt?.ToString("dd/MM/yyyy HH:mm") ?? string.Empty,
-                Tarifa = s.HasCustomRate ? "Personalizada" : s.RateName,
+                Tarifa = ExitReceipt.DescribeRate(s),
                 Tiempo = FormatDuration(s.CurrentDuration),
                 Monto = s.ChargedAmount?.ToString("C0") ?? string.Empty,
                 Pago = s.PaymentMethod ?? string.Empty
@@ -517,7 +517,9 @@ public partial class MainForm : Form
                 ? ParkingService.CalculateAmount(session, DateTime.Now)
                 : session.ChargedAmount ?? 0;
             var statusText = session.Status == "A" ? "Activo" : $"Salió: {session.ExitAt:dd/MM/yyyy HH:mm}";
-            var rate = session.HasCustomRate ? $"Personalizada ({session.CustomNote ?? "especial"})" : session.RateName;
+            var rate = session.ChargedDays is not null
+                ? ExitReceipt.DescribeRate(session)
+                : session.HasCustomRate ? $"Personalizada ({session.CustomNote ?? "especial"})" : session.RateName;
             lblDetails.Text =
                 $"Placa: {session.Plate}\nEntrada: {session.EntryAt:dd/MM/yyyy HH:mm}\nEstado: {statusText}\nTarifa: {rate}\nTiempo: {FormatDuration(session.CurrentDuration)}\nMonto estimado: {MoneyHelper.Format(amount)}";
         }
@@ -697,8 +699,9 @@ public partial class MainForm : Form
     }
 
     /// <summary>
-    /// Flujo de salida en una sola ventana: abre el cobro y, al confirmar, registra la salida
-    /// e imprime el comprobante directo en la impresora de tiquetes (sin ventanas adicionales).
+    /// Flujo de salida en una sola ventana: abre el cobro y, al confirmar, registra la salida.
+    /// El comprobante solo se imprime si el cajero lo marcó (no todos los clientes lo piden);
+    /// siempre puede reimprimirse después con el botón 'Reimprimir' o escaneando el QR.
     /// </summary>
     private bool ChargeAndRegisterExit(ParkingSession session)
     {
@@ -717,26 +720,30 @@ public partial class MainForm : Form
             dialog.TenderedAmount,
             dialog.CashPortion,
             dialog.SinpePortion,
-            dialog.QuotedBaseAmount);
+            dialog.QuotedBaseAmount,
+            dialog.ChargedDays);
 
-        var receipt = ExitReceipt.FromClosedSession(
-            closed, dialog.PaymentMethod, dialog.TenderedAmount, dialog.Reference,
-            _currentUser.FullName, dialog.CashPortion, dialog.SinpePortion);
-        try
+        if (dialog.PrintReceiptRequested)
         {
-            _ticketService.PrintReceipt(receipt);
-        }
-        catch (Exception ex)
-        {
-            // La salida ya quedó registrada: si la impresora falla se muestra la vista previa
-            // para reintentar la impresión desde ahí.
-            MessageBox.Show(
-                $"La salida quedó registrada, pero no se pudo imprimir el comprobante.\n\nDetalle: {ex.Message}",
-                "Impresión",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
-            using var receiptForm = new ReceiptPreviewForm(receipt);
-            receiptForm.ShowDialog(this);
+            var receipt = ExitReceipt.FromClosedSession(
+                closed, dialog.PaymentMethod, dialog.TenderedAmount, dialog.Reference,
+                _currentUser.FullName, dialog.CashPortion, dialog.SinpePortion);
+            try
+            {
+                _ticketService.PrintReceipt(receipt);
+            }
+            catch (Exception ex)
+            {
+                // La salida ya quedó registrada: si la impresora falla se muestra la vista
+                // previa para reintentar la impresión desde ahí.
+                MessageBox.Show(
+                    $"La salida quedó registrada, pero no se pudo imprimir el comprobante.\n\nDetalle: {ex.Message}",
+                    "Impresión",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                using var receiptForm = new ReceiptPreviewForm(receipt);
+                receiptForm.ShowDialog(this);
+            }
         }
 
         return true;
@@ -1139,7 +1146,9 @@ public partial class MainForm : Form
             {
                 Fecha = r.PaidAt.ToString("dd/MM/yyyy HH:mm"),
                 Placa = r.Plate,
-                Tarifa = r.IsCustom ? "Personalizada" : r.RateName,
+                Tarifa = r.ChargedDays is { } d
+                    ? $"Por día ({d})"
+                    : r.IsCustom ? "Personalizada" : r.RateName,
                 Pago = r.PaymentMethod == PaymentMethods.Mixed
                     ? $"Mixto ({MoneyHelper.Format(r.CashAmount ?? 0m)} + {MoneyHelper.Format(r.SinpeAmount ?? 0m)} SINPE)"
                     : r.PaymentMethod,

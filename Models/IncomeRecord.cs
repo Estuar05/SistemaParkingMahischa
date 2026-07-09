@@ -7,6 +7,9 @@ public sealed class IncomeRecord
     public string Plate { get; set; } = string.Empty;
     public string RateName { get; set; } = string.Empty;
     public bool IsCustom { get; set; }
+
+    /// <summary>Cantidad de días cobrados cuando la salida se cobró por día.</summary>
+    public int? ChargedDays { get; set; }
     public decimal Amount { get; set; }
     public string PaymentMethod { get; set; } = PaymentMethods.Cash;
     public string? Reference { get; set; }

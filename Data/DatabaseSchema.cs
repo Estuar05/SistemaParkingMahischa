@@ -259,6 +259,11 @@ IF COL_LENGTH('dbo.Payments', 'ChangeAmount') IS NULL
     ALTER TABLE dbo.Payments ADD ChangeAmount decimal(18,2) NULL;
 GO
 
+-- Cobro por día elegido al registrar la salida: se guarda la cantidad de días cobrados.
+IF COL_LENGTH('dbo.ParkingSessions', 'ChargedDays') IS NULL
+    ALTER TABLE dbo.ParkingSessions ADD ChargedDays int NULL;
+GO
+
 -- Pago mixto (Efectivo + SINPE): desglose de cuánto se pagó con cada forma.
 IF COL_LENGTH('dbo.Payments', 'CashAmount') IS NULL
     ALTER TABLE dbo.Payments ADD CashAmount decimal(18,2) NULL;
@@ -354,6 +359,16 @@ IF EXISTS (
 BEGIN
     ALTER TABLE dbo.CashClosures DROP COLUMN DifferenceAmount;
     ALTER TABLE dbo.CashClosures ADD DifferenceAmount AS (CountedAmount - MinimumCashAmount) PERSISTED;
+END
+GO
+
+-- Migración de una sola vez (2026-07): el negocio trabaja con UNA sola tarifa (por hora);
+-- el cobro por día se elige en la ventana de cobro. Se desactivan las demás tarifas, pero
+-- el administrador puede reactivarlas desde el módulo Tarifas si algún día las necesita.
+IF NOT EXISTS (SELECT 1 FROM dbo.AppConfig WHERE ConfigKey = N'SoloTarifaHora')
+BEGIN
+    UPDATE dbo.ParkingRates SET IsActive = 0 WHERE RateType <> N'Hora';
+    INSERT INTO dbo.AppConfig(ConfigKey, ConfigValue) VALUES (N'SoloTarifaHora', N'1');
 END
 GO
 """;

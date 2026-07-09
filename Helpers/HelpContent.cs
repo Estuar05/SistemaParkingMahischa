@@ -38,7 +38,8 @@ public static class HelpContent
 
             ── REGISTRAR UNA ENTRADA (cuando el auto llega) ──
             1. Escriba la PLACA del vehículo.
-            2. Elija el TIPO DE TARIFA (por hora, por día, etc.).
+            2. El TIPO DE TARIFA ya viene seleccionado ('Por hora' es la única tarifa activa;
+               el cobro por día se elige al momento de COBRAR la salida).
             3. Presione 'Registrar entrada'.
             4. Se abre el tiquete con un código QR. Presione 'Imprimir' y entréguelo al cliente.
                (Guarde el tiquete: ese QR es lo que se escanea a la salida.)
@@ -48,16 +49,20 @@ public static class HelpContent
             1. Haga clic dentro del campo 'Código QR / ticket'.
             2. Escanee el QR del tiquete del cliente con el lector.
             3. Se abre DIRECTAMENTE la ventana de COBRO con la placa y el monto.
-            4. Cobre y presione 'Cobrar y registrar salida': el comprobante se imprime solo.
+            4. Cobre y presione 'Cobrar y registrar salida'.
             (Si el vehículo YA PAGÓ, al escanear su QR se ofrece reimprimir el comprobante.)
 
             FORMA MANUAL, buscando la placa:
             1. Escriba la placa en 'Buscar por placa' y presione 'Buscar placa'.
             2. Haga clic en el vehículo en la lista.
-            3. Presione 'Registrar salida', cobre y confirme. El comprobante se imprime solo.
+            3. Presione 'Registrar salida', cobre y confirme.
 
             ── AL COBRAR (ventana de cobro) ──
-            Al registrar la salida se abre la ventana de COBRO:
+            La ventana muestra el TIEMPO que estuvo el vehículo (en estadías largas también
+            el total de horas): úselo para verificar que el monto calculado sea correcto.
+            • COBRAR POR DÍA: si la estadía se cobra por días, marque la casilla
+              'Cobrar por día' y escriba la CANTIDAD DE DÍAS; el total es días x ₡3 000
+              (reemplaza el cálculo por hora).
             • MONTO EXTRA: si el cliente se pasó unos minutos, puede sumar un monto adicional.
             • FORMA DE PAGO: elija 'Efectivo', 'SINPE' o 'Mixto' (una parte en efectivo y
               otra por SINPE).
@@ -66,6 +71,9 @@ public static class HelpContent
             • En SINPE puede anotar la referencia o comprobante (opcional).
             • En MIXTO escriba cuánto paga en EFECTIVO: el resto se completa solo como SINPE
               (las dos partes deben sumar el total).
+            • IMPRIMIR COMPROBANTE: el comprobante es OPCIONAL; marque la casilla solo si el
+              cliente lo pide. Siempre se puede reimprimir después (botón 'Reimprimir' o
+              escaneando el QR del tiquete).
 
             ── TARIFA PERSONALIZADA ──
             Para cobrar diferente a un cliente puntual: seleccione el vehículo y presione

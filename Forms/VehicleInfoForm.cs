@@ -129,15 +129,20 @@ public sealed class VehicleInfoForm : Form
                 dialog.TenderedAmount,
                 dialog.CashPortion,
                 dialog.SinpePortion,
-                dialog.QuotedBaseAmount);
+                dialog.QuotedBaseAmount,
+                dialog.ChargedDays);
             _session = closed;
             ChangesMade = true;
 
-            var receipt = ExitReceipt.FromClosedSession(
-                closed, dialog.PaymentMethod, dialog.TenderedAmount, dialog.Reference,
-                _currentUser.FullName, dialog.CashPortion, dialog.SinpePortion);
-            using var receiptForm = new ReceiptPreviewForm(receipt);
-            receiptForm.ShowDialog(this);
+            if (dialog.PrintReceiptRequested)
+            {
+                var receipt = ExitReceipt.FromClosedSession(
+                    closed, dialog.PaymentMethod, dialog.TenderedAmount, dialog.Reference,
+                    _currentUser.FullName, dialog.CashPortion, dialog.SinpePortion);
+                using var receiptForm = new ReceiptPreviewForm(receipt);
+                receiptForm.ShowDialog(this);
+            }
+
             Close();
         }
         catch (Exception ex)

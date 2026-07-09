@@ -43,7 +43,7 @@ public sealed class ExitReceipt
             Plate = closed.Plate,
             EntryAt = closed.EntryAt,
             ExitAt = closed.ExitAt ?? DateTime.Now,
-            RateName = closed.HasCustomRate ? "Personalizada" : closed.RateName,
+            RateName = DescribeRate(closed),
             BaseAmount = total - extra,
             ExtraAmount = extra,
             Total = total,
@@ -66,7 +66,7 @@ public sealed class ExitReceipt
             Plate = session.Plate,
             EntryAt = session.EntryAt,
             ExitAt = session.ExitAt ?? payment.PaidAt,
-            RateName = session.HasCustomRate ? "Personalizada" : session.RateName,
+            RateName = DescribeRate(session),
             BaseAmount = payment.Amount - extra,
             ExtraAmount = extra,
             Total = payment.Amount,
@@ -80,4 +80,10 @@ public sealed class ExitReceipt
             IsReprint = true
         };
     }
+
+    /// <summary>Nombre de la tarifa con que se cobró: por día (con la cantidad), personalizada o la asignada.</summary>
+    public static string DescribeRate(ParkingSession session) =>
+        session.ChargedDays is { } days
+            ? $"Por día ({days} {(days == 1 ? "día" : "días")})"
+            : session.HasCustomRate ? "Personalizada" : session.RateName;
 }

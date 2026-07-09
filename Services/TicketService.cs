@@ -248,11 +248,12 @@ public sealed class TicketService
         return y + messageHeight + 8;
     }
 
+    /// <summary>En estadías largas agrega el total de horas, para poder verificar el cobro.</summary>
     private static string FormatDuration(TimeSpan duration)
     {
         if (duration.TotalDays >= 1)
         {
-            return $"{(int)duration.TotalDays}d {duration.Hours}h {duration.Minutes}m";
+            return $"{(int)duration.TotalDays}d {duration.Hours}h {duration.Minutes}m ({(int)duration.TotalHours} h)";
         }
 
         return $"{(int)duration.TotalHours}h {duration.Minutes}m";
