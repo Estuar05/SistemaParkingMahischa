@@ -457,7 +457,10 @@ public sealed class ParkingService
         int? blockMinutes = null,
         decimal? blockAmount = null)
     {
-        var minutes = Math.Max(0, (exitAt - entryAt).TotalMinutes);
+        // Se cobra por minutos COMPLETOS: los segundos nunca cuentan. El tiempo en pantalla
+        // se muestra en minutos, así que sin esto una estadía que se ve como "1h 0m" (pero
+        // lleva 1h y unos segundos) cobraba la siguiente fracción de 10 minutos.
+        var minutes = Math.Floor(Math.Max(0, (exitAt - entryAt).TotalMinutes));
 
         if (rateType == "Hora")
         {
