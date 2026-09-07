@@ -80,6 +80,8 @@ BEGIN
         RateType nvarchar(30) NOT NULL,
         Amount decimal(18,2) NOT NULL,
         GraceMinutes int NOT NULL CONSTRAINT DF_ParkingRates_GraceMinutes DEFAULT(0),
+        BlockMinutes int NULL,
+        BlockAmount decimal(18,2) NULL,
         IsActive bit NOT NULL CONSTRAINT DF_ParkingRates_IsActive DEFAULT(1),
         SortOrder int NOT NULL CONSTRAINT DF_ParkingRates_SortOrder DEFAULT(0),
         UpdatedAt datetime2(0) NOT NULL CONSTRAINT DF_ParkingRates_UpdatedAt DEFAULT(SYSDATETIME()),
@@ -87,6 +89,13 @@ BEGIN
         CONSTRAINT CK_ParkingRates_Grace CHECK(GraceMinutes >= 0)
     );
 END
+GO
+
+IF COL_LENGTH('dbo.ParkingRates', 'BlockMinutes') IS NULL
+    ALTER TABLE dbo.ParkingRates ADD BlockMinutes int NULL;
+GO
+IF COL_LENGTH('dbo.ParkingRates', 'BlockAmount') IS NULL
+    ALTER TABLE dbo.ParkingRates ADD BlockAmount decimal(18,2) NULL;
 GO
 
 IF OBJECT_ID('dbo.ParkingSessions', 'U') IS NULL
@@ -229,12 +238,12 @@ GO
 
 IF NOT EXISTS (SELECT 1 FROM dbo.ParkingRates)
 BEGIN
-    INSERT INTO dbo.ParkingRates(RateName, RateType, Amount, GraceMinutes, SortOrder)
+    INSERT INTO dbo.ParkingRates(RateName, RateType, Amount, GraceMinutes, SortOrder, BlockMinutes, BlockAmount)
     VALUES
-        (N'Por hora', N'Hora', 1000, 10, 1),
-        (N'Por día', N'Dia', 6000, 15, 2),
-        (N'Semanal', N'Semana', 30000, 30, 3),
-        (N'Mensual', N'Mes', 90000, 60, 4);
+        (N'Por hora', N'Hora', 700, 0, 1, 720, 3000),
+        (N'Por día', N'Dia', 6000, 15, 2, NULL, NULL),
+        (N'Semanal', N'Semana', 30000, 30, 3, NULL, NULL),
+        (N'Mensual', N'Mes', 90000, 60, 4, NULL, NULL);
 END
 GO
 
@@ -252,6 +261,62 @@ GO
 
 IF NOT EXISTS (SELECT 1 FROM dbo.AppConfig WHERE ConfigKey = N'MinimumCashAmount')
     INSERT INTO dbo.AppConfig(ConfigKey, ConfigValue) VALUES (N'MinimumCashAmount', N'20000');
+GO
+
+IF NOT EXISTS (SELECT 1 FROM dbo.AppConfig WHERE ConfigKey = N'TarifaFracciones202609')
+BEGIN
+    UPDATE dbo.ParkingRates
+    SET GraceMinutes = 0,
+        UpdatedAt = SYSDATETIME()
+    WHERE RateType = N'Hora'
+      AND Amount = 700
+      AND BlockAmount = 3000;
+
+    INSERT INTO dbo.AppConfig(ConfigKey, ConfigValue) VALUES (N'TarifaFracciones202609', N'1');
+END
+GO
+
+CREATE OR ALTER TRIGGER dbo.TR_ParkingSessions_LockClosedCharge
+ON dbo.ParkingSessions
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF EXISTS
+    (
+        SELECT 1
+        FROM inserted i
+        INNER JOIN deleted d ON d.SessionId = i.SessionId
+        WHERE d.Status = 'C'
+          AND
+          (
+              ISNULL(i.ChargedAmount, -1) <> ISNULL(d.ChargedAmount, -1)
+              OR ISNULL(i.ExitAt, CONVERT(datetime2(0), '19000101')) <> ISNULL(d.ExitAt, CONVERT(datetime2(0), '19000101'))
+          )
+    )
+        THROW 51001, N'El monto y la salida de un cobro cerrado no se pueden modificar.', 1;
+END
+GO
+
+CREATE OR ALTER TRIGGER dbo.TR_Payments_LockOriginalCharge
+ON dbo.Payments
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF EXISTS
+    (
+        SELECT 1
+        FROM inserted i
+        INNER JOIN deleted d ON d.PaymentId = i.PaymentId
+        WHERE i.SessionId <> d.SessionId
+           OR i.Amount <> d.Amount
+           OR i.PaidAt <> d.PaidAt
+    )
+        THROW 51002, N'El monto y la fecha del pago original no se pueden modificar.', 1;
+END
 GO
 
 -- El cierre de caja compara el contado únicamente contra el fondo de caja.

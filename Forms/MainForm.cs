@@ -721,7 +721,8 @@ public partial class MainForm : Form
             dialog.CashPortion,
             dialog.SinpePortion,
             dialog.QuotedBaseAmount,
-            dialog.ChargedDays);
+            dialog.ChargedDays,
+            dialog.QuotedAt);
 
         if (dialog.PrintReceiptRequested)
         {

@@ -18,6 +18,12 @@ public sealed class ExitPaymentForm : Form
     private readonly decimal _dayPrice;
 
     /// <summary>
+    /// Instante exacto en que se abrió el cobro. Tanto el tiempo mostrado como el monto
+    /// automático se calculan una sola vez con este valor y no avanzan mientras se paga.
+    /// </summary>
+    public DateTime QuotedAt { get; }
+
+    /// <summary>
     /// Monto por tiempo con el que se registra la salida (lo que se le mostró al cajero):
     /// el cálculo por hora, o días x precio del día si eligió cobrar por día.
     /// </summary>
@@ -38,7 +44,9 @@ public sealed class ExitPaymentForm : Form
 
     public ExitPaymentForm(ParkingSession session)
     {
-        _hourlyAmount = ParkingService.CalculateAmount(session, DateTime.Now);
+        var now = DateTime.Now;
+        QuotedAt = now.AddTicks(-(now.Ticks % TimeSpan.TicksPerSecond));
+        _hourlyAmount = ParkingService.CalculateAmount(session, QuotedAt);
         _dayPrice = session.EffectiveBlockAmount is { } block && block > 0 ? block : DefaultDayPrice;
 
         Text = "Cobro de salida";
@@ -74,14 +82,14 @@ public sealed class ExitPaymentForm : Form
         // coincide con las horas reales del vehículo.
         var lblTime = new Label
         {
-            Text = $"Tiempo: {FormatDuration(DateTime.Now - session.EntryAt)}",
+            Text = $"Tiempo al abrir cobro: {FormatDuration(QuotedAt - session.EntryAt)}",
             Font = new Font("Segoe UI", 11.5F, FontStyle.Bold),
             ForeColor = Color.FromArgb(36, 99, 235),
             Location = new Point(24, 124),
             Size = new Size(372, 26)
         };
 
-        var lblBaseCaption = MakeCaption("Monto por tiempo", new Point(24, 160));
+        var lblBaseCaption = MakeCaption("Monto por tiempo (congelado)", new Point(24, 160));
         var lblBase = new Label
         {
             Text = MoneyHelper.Format(_hourlyAmount),
@@ -236,7 +244,7 @@ public sealed class ExitPaymentForm : Form
 
         void RefreshTotals()
         {
-            lblBaseCaption.Text = chkDay.Checked ? $"Monto por día ({Math.Max(1, Days())} x {MoneyHelper.Format(_dayPrice)})" : "Monto por tiempo";
+            lblBaseCaption.Text = chkDay.Checked ? $"Monto por día ({Math.Max(1, Days())} x {MoneyHelper.Format(_dayPrice)})" : "Monto por tiempo (congelado)";
             lblBase.Text = MoneyHelper.Format(BaseAmount());
             var total = Total();
             lblTotal.Text = MoneyHelper.Format(total);

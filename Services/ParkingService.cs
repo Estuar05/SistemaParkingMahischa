@@ -189,7 +189,8 @@ public sealed class ParkingService
         decimal? cashPortion = null,
         decimal? sinpePortion = null,
         decimal? quotedBaseAmount = null,
-        int? chargedDays = null)
+        int? chargedDays = null,
+        DateTime? quotedAt = null)
     {
         if (chargedDays is < 1)
         {
@@ -234,7 +235,16 @@ public sealed class ParkingService
                 throw new InvalidOperationException("Este vehículo ya tiene salida registrada.");
             }
 
-            var exitAt = DateTime.Now;
+            var now = DateTime.Now;
+            var paidAt = now.AddTicks(-(now.Ticks % TimeSpan.TicksPerSecond));
+            // El cierre usa el instante en que se abrió la ventana de cobro. Así el tiempo,
+            // el monto mostrado y la salida registrada corresponden al mismo momento. Si un
+            // llamador antiguo no envía el instante, se conserva el comportamiento anterior.
+            var exitAt = quotedAt is { } frozenAt
+                && frozenAt >= session.EntryAt
+                && frozenAt <= paidAt
+                    ? frozenAt.AddTicks(-(frozenAt.Ticks % TimeSpan.TicksPerSecond))
+                    : paidAt;
             // El monto por tiempo se congela con lo que la ventana de cobro le mostró al
             // cajero (lo que el cliente pagó). Si se recalculara aquí, los minutos que tarda
             // el cobro podrían cruzar otra fracción y guardar/imprimir un monto mayor al cobrado.
@@ -309,7 +319,7 @@ public sealed class ParkingService
                     """;
                 payment.Parameters.AddWithValue("@SessionId", sessionId);
                 payment.Parameters.AddWithValue("@Amount", amount);
-                payment.Parameters.AddWithValue("@PaidAt", exitAt);
+                payment.Parameters.AddWithValue("@PaidAt", paidAt);
                 payment.Parameters.AddWithValue("@UserId", userId);
                 payment.Parameters.AddWithValue("@PaymentMethod", paymentMethod);
                 payment.Parameters.AddWithValue("@Reference", (object?)reference ?? DBNull.Value);
@@ -323,6 +333,7 @@ public sealed class ParkingService
             transaction.Commit();
             AuditService.Log(userId, "RegistrarSalida", "ParkingSessions", sessionId.ToString(),
                 $"Placa {session.Plate}, cobro {amount:0.00} ({paymentMethod}), extra {extraAmount:0.00}"
+                + $", monto congelado {exitAt:yyyy-MM-dd HH:mm:ss}, pago {paidAt:yyyy-MM-dd HH:mm:ss}"
                 + (chargedDays is { } days ? $", por dia x{days}" : string.Empty)
                 + (paymentMethod == PaymentMethods.Mixed ? $", efectivo {cashAmount:0.00}, SINPE {sinpeAmount:0.00}" : string.Empty));
             return GetSessionById(sessionId) ?? throw new InvalidOperationException("No se pudo leer la salida registrada.");
@@ -444,9 +455,9 @@ public sealed class ParkingService
             session.EffectiveGraceMinutes, session.EffectiveBlockMinutes, session.EffectiveBlockAmount);
 
     /// <summary>
-    /// El cobro empieza desde el ingreso (nunca sale gratis). El tiempo de gracia NO regala los
-    /// primeros minutos: sirve para no cobrar una unidad adicional por pasarse unos pocos minutos
-    /// del último cobro (ej. con gracia de 10, una estadía de 1h02m cobra solo la hora).
+    /// El cobro empieza desde el ingreso (nunca sale gratis). En la tarifa normal la gracia es
+    /// cero: los primeros 10 minutos después de una hora cuestan ₡200 y cada tramo posterior
+    /// suma ₡100. El parámetro de gracia se conserva para tarifas personalizadas.
     /// </summary>
     public static decimal CalculateAmount(
         DateTime entryAt,
@@ -483,8 +494,8 @@ public sealed class ParkingService
     /// Tarifa por hora: la PRIMERA hora se cobra completa desde que el vehículo ingresa
     /// (ej. ₡700 aunque lleve 5 minutos). A partir de cada hora completa, el excedente se
     /// cobra según la tabla de fracciones de 10 minutos (10m=₡200, 20m=₡300, 30m=₡400,
-    /// 40m=₡500, 50m=₡600, hora completa=monto de la hora). La fracción no se cobra cuando
-    /// solo se pasó del último cobro por el tiempo de gracia. Con tope por bloque
+    /// 40m=₡500, 50m=₡600, hora completa=monto de la hora). En tarifas que tengan una gracia
+    /// personalizada, la fracción no se cobra dentro de esa gracia. Con tope por bloque
     /// (ej. ₡3000 por cada 12h) el bloque nunca cobra más del tope: al superarlo, la
     /// estadía pasa automáticamente a la tarifa diaria.
     /// </summary>

@@ -309,7 +309,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.ParkingRates)
 BEGIN
     INSERT INTO dbo.ParkingRates(RateName, RateType, Amount, GraceMinutes, SortOrder, BlockMinutes, BlockAmount)
     VALUES
-        (N'Por hora', N'Hora', 700, 10, 1, 720, 3000),
+        (N'Por hora', N'Hora', 700, 0, 1, 720, 3000),
         (N'Semanal', N'Semana', 30000, 30, 3, NULL, NULL),
         (N'Mensual', N'Mes', 90000, 60, 4, NULL, NULL);
 END
@@ -347,6 +347,69 @@ GO
 
 IF NOT EXISTS (SELECT 1 FROM dbo.AppConfig WHERE ConfigKey = N'MinimumCashAmount')
     INSERT INTO dbo.AppConfig(ConfigKey, ConfigValue) VALUES (N'MinimumCashAmount', N'20000');
+GO
+
+-- Ajuste 2026-09: la tarifa normal no usa gracia. Del minuto 1 al 10 después de una hora
+-- se cobran ₡200; luego se agregan ₡100 por cada tramo de 10 minutos, hasta el tope.
+-- La marca evita volver a cambiar una tarifa que el administrador configure posteriormente.
+IF NOT EXISTS (SELECT 1 FROM dbo.AppConfig WHERE ConfigKey = N'TarifaFracciones202609')
+BEGIN
+    UPDATE dbo.ParkingRates
+    SET GraceMinutes = 0,
+        UpdatedAt = SYSDATETIME()
+    WHERE RateType = N'Hora'
+      AND Amount = 700
+      AND BlockAmount = 3000;
+
+    INSERT INTO dbo.AppConfig(ConfigKey, ConfigValue) VALUES (N'TarifaFracciones202609', N'1');
+END
+GO
+
+-- Los importes y la hora de salida de un cobro cerrado son datos históricos inmutables.
+-- Esto permite corregir otros datos del pago en el futuro sin alterar lo que se cobró.
+CREATE OR ALTER TRIGGER dbo.TR_ParkingSessions_LockClosedCharge
+ON dbo.ParkingSessions
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF EXISTS
+    (
+        SELECT 1
+        FROM inserted i
+        INNER JOIN deleted d ON d.SessionId = i.SessionId
+        WHERE d.Status = 'C'
+          AND
+          (
+              ISNULL(i.ChargedAmount, -1) <> ISNULL(d.ChargedAmount, -1)
+              OR ISNULL(i.ExtraAmount, -1) <> ISNULL(d.ExtraAmount, -1)
+              OR ISNULL(i.ChargedDays, -1) <> ISNULL(d.ChargedDays, -1)
+              OR ISNULL(i.ExitAt, CONVERT(datetime2(0), '19000101')) <> ISNULL(d.ExitAt, CONVERT(datetime2(0), '19000101'))
+          )
+    )
+        THROW 51001, N'El monto y la salida de un cobro cerrado no se pueden modificar.', 1;
+END
+GO
+
+CREATE OR ALTER TRIGGER dbo.TR_Payments_LockOriginalCharge
+ON dbo.Payments
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF EXISTS
+    (
+        SELECT 1
+        FROM inserted i
+        INNER JOIN deleted d ON d.PaymentId = i.PaymentId
+        WHERE i.SessionId <> d.SessionId
+           OR i.Amount <> d.Amount
+           OR i.PaidAt <> d.PaidAt
+    )
+        THROW 51002, N'El monto y la fecha del pago original no se pueden modificar.', 1;
+END
 GO
 
 -- El cierre de caja compara el contado únicamente contra el fondo de caja: lo cobrado del día

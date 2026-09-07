@@ -36,8 +36,9 @@ public sealed class ParkingController
         decimal? cashPortion = null,
         decimal? sinpePortion = null,
         decimal? quotedBaseAmount = null,
-        int? chargedDays = null) =>
-        _parkingService.RegisterExit(sessionId, userId, extraAmount, paymentMethod, reference, tenderedAmount, cashPortion, sinpePortion, quotedBaseAmount, chargedDays);
+        int? chargedDays = null,
+        DateTime? quotedAt = null) =>
+        _parkingService.RegisterExit(sessionId, userId, extraAmount, paymentMethod, reference, tenderedAmount, cashPortion, sinpePortion, quotedBaseAmount, chargedDays, quotedAt);
 
     public Payment? GetPayment(long sessionId) => _parkingService.GetPaymentBySession(sessionId);
 

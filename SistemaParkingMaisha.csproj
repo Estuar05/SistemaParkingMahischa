@@ -22,6 +22,10 @@
     <Content Include="Assets\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="SistemaParkingMaisha.Tests\**\*.cs" />
+  </ItemGroup>
+
 </Project>
 
 
